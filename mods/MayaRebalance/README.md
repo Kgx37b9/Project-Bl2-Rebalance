@@ -14,6 +14,9 @@ Values below refer to 5/5 unless stated otherwise; class-mod ranks scale support
 | --- | --- |
 | Accelerate | +20% gun damage and +25% projectile speed. |
 | Flicker | +50% status-effect chance and +30% elemental damage. |
+| Mind's Eye | Replaces the melee bonus with +25% Accuracy; the native critical-hit damage bonus is preserved. |
+| Sweet Release | Healing-orb base projectile speed increases from 800 to 1200 (+50%); healing and the native trigger are unchanged. |
+| Restoration | +20% maximum health; shooting allies to heal them is preserved. |
 | Suspension | +3.5 seconds of Phaselock duration. |
 | Wreck | Passive +25% fire rate/+15% gun damage, doubled during Phaselock. |
 | Quicken | +50% cooldown rate, including Scorn. Scorn's base cooldown is 12 seconds. |
