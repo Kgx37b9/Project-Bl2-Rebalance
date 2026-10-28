@@ -131,9 +131,8 @@ serving as evidence of permission. Original reference packages are not bundled.
   engine, prove final damage values or certify co-op.
 - Solo user reports confirm many earlier behaviors; the newest numerical and
   Backdraft changes still require targeted in-game comparisons after restart.
-- Phaselock's configured 1.75 scale is not proof of +75% versus every setup:
-  the earlier UCP configuration uses a different scale (25) on a relevant direct
-  damage behavior. Verify native baseline, linked inputs and load order before
+- Phaselock's configured 1.75 scale is not proof of +75% versus every setup.
+  Verify native baseline, linked inputs and load order before
   asserting a measured increase. No gameplay change was made during this review.
 - Clean logs are not frame-time measurements. Test repeated menu/re-entry,
   class-mod swaps, respecs and high-projectile/status fights separately.
