@@ -1,0 +1,25 @@
+[project]
+name = "MayaRebalance"
+version = "1.0"
+authors = [{ name = "Kgx37b9" }]
+description = """\
+MayaRebalance 1.0<br>\
+Author: Kgx37b9<br><br>\
+Rebalances Maya's skills in Borderlands 2 with new synergies, healing, damage \
+and cooldown adjustments, plus native skill indicators on the HUD.<br><br>\
+Credits and references:<br>\
+- UCP (Unofficial Community Patch): Shadowevil and the Community Patch Team; selected Maya adjustments.<br>\
+- Skill Scaling Patch: 55tumbl; historical scaling research reference. Current Scorn/Ruin bonus curves are defined by MayaRebalance.<br>\
+- Elemental Banshee Maya: 55tumbl; historical native-graph reference; the former Immolate graph adaptation was replaced by an independent dispatcher. See DEVELOPMENT.md.<br>\
+- Borderlands PythonSDK / bl-sdk and the BLCM / OpenBLCMM community.<br><br>\
+Own contributions: all rights reserved; see LICENSE.md. Third-party terms remain applicable.<br>\
+Additional references and links are in the README. The reference mods are not bundled.<br>\
+Co-op has not been validated. Restart the game to fully disable.\
+"""
+
+[tool.sdkmod]
+name = "MayaRebalance"
+version = "1.0"
+coop_support = "Unknown"
+supported_games = ["BL2"]
+
