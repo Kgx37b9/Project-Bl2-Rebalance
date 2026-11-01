@@ -1621,26 +1621,31 @@ def _received_damage_attribute(field: str, outer: Any) -> Any:
 
 
 def _elemental_mastery_modifiers(depth: int, source: Any = None) -> tuple[tuple[str, Any, Any], ...]:
-    rows = _slagger_modifier_pool.get(depth)
-    if rows is None:
-        # Prepare every leaf before constructing modifiers, including unloaded ones.
+    # Most impacts use one native source. Prepare only that leaf, retaining all
+    # previously allocated rows for the existing interrupted-callback cleanup.
+    field = SLAGGER_SOURCE_FIELDS.get(str(source._path_name())) if source is not None else None
+    required = (field,) if field is not None else SLAGGER_RECEIVED_FIELDS
+    rows = _slagger_modifier_pool.get(depth, ())
+    available = {row[0]: row for row in rows}
+    missing = [name for name in required if name not in available]
+    if missing:
         outer = _slagger_definition
         if outer is None:
             outer = unrealsdk.find_object("SkillDefinition", THOUGHTLOCK_PATH)
-        attributes = [(field, _received_damage_attribute(field, outer)) for field in SLAGGER_RECEIVED_FIELDS]
-        rows = tuple((field, attribute, unrealsdk.construct_object(
-            "AttributeModifier", outer, f"MR_ElementalMastery_{depth}_{field}",
-            flags=ObjectFlags.KEEP_ALIVE)) for field, attribute in attributes)
-        for _, _, modifier in rows:
-            modifier.Type = unrealsdk.find_enum("EModifierType").MT_PostAdd
-        _slagger_modifier_pool[depth] = rows
-    if source is not None:
-        field = SLAGGER_SOURCE_FIELDS.get(str(source._path_name()))
-        if field is not None:
-            selected = tuple(row for row in rows if row[0] == field)
-            if len(selected) == 1:
-                return selected
-    return rows
+        modifier_type = unrealsdk.find_enum("EModifierType").MT_PostAdd
+        for name in missing:
+            attribute = _received_damage_attribute(name, outer)
+            modifier = unrealsdk.construct_object(
+                "AttributeModifier", outer, f"MR_ElementalMastery_{depth}_{name}",
+                flags=ObjectFlags.KEEP_ALIVE,
+            )
+            modifier.Type = modifier_type
+            row = (name, attribute, modifier)
+            rows += (row,)
+            available[name] = row
+            # Preserve partial preparation if a later native allocation fails.
+            _slagger_modifier_pool[depth] = rows
+    return tuple(available[name] for name in required)
 
 
 def _set_slagger_scope_active(scope: dict[str, Any], active: bool) -> None:
@@ -2609,6 +2614,8 @@ def mark_thoughtlock_targets(action: UObject, args: WrappedStruct, _ret: Any, _f
         # Walk the current world's native pawn list only on a confirmed target.
         # No global object scan, per-frame area scan or strong actor cache.
         center, candidate, seen, count = target.Location, world.PawnList, set(), 0
+        center_xyz = tuple(float(getattr(center, axis)) for axis in ("X", "Y", "Z"))
+        radius_sq = radius * radius
         extent = copy.copy(center)
         extent.X, extent.Y, extent.Z = 0.0, 0.0, 0.0
         while candidate is not None:
@@ -2619,11 +2626,14 @@ def mark_thoughtlock_targets(action: UObject, args: WrappedStruct, _ret: Any, _f
             seen.add(address)
             next_pawn = candidate.NextPawn
             try:
-                if candidate != target and _thoughtlock_enemy(candidate, controller, world):
+                if (candidate != target and not candidate.bDeleteMe
+                        and not candidate.bPendingDelete and candidate.WorldInfo == world):
                     point = candidate.Location
-                    distance_sq = sum((float(getattr(point, axis)) - float(getattr(center, axis))) ** 2
-                                      for axis in ("X", "Y", "Z"))
-                    if distance_sq <= radius * radius and target.FastTrace(point, center, extent, False):
+                    distance_sq = sum((float(getattr(point, axis)) - origin) ** 2
+                                      for axis, origin in zip(("X", "Y", "Z"), center_xyz))
+                    # Reject distant actors before native health/opinion queries.
+                    if (distance_sq <= radius_sq and _thoughtlock_enemy(candidate, controller, world)
+                            and target.FastTrace(point, center, extent, False)):
                         count += int(_store_thoughtlock_mark(candidate, controller, world, now, False))
             except (AttributeError, TypeError, ValueError, RuntimeError) as exc:
                 _log_error_once(f"Could not inspect a Psychic Shriek area target: {exc}")
@@ -2767,7 +2777,7 @@ def _log_minds_eye_runtime(player_controller: Any, skill: Any) -> None:
     )
 
 
-def _sync_minds_eye_effects(player_controller: Any) -> None:
+def _sync_minds_eye_effects(player_controller: Any, *, log_runtime: bool = True) -> None:
     definition = _configure_minds_eye()
     accuracy_definition = next(
         effect for effect in definition.SkillEffectDefinitions
@@ -2817,7 +2827,8 @@ def _sync_minds_eye_effects(player_controller: Any) -> None:
             changed = True
         if changed:
             skill.bForceRefreshModifiersNextTick = True
-        _log_minds_eye_runtime(player_controller, skill)
+        if log_runtime:
+            _log_minds_eye_runtime(player_controller, skill)
 
 
 def _blight_phoenix_speed_effect_matches(effect: Any) -> bool:
@@ -4412,7 +4423,7 @@ def refresh_skill_stat_lines(player_controller: Any) -> None:
         except (AttributeError, TypeError, ValueError, RuntimeError) as exc:
             _log_error_once(f"Could not maintain Scorn description: {exc}")
     try:
-        _sync_minds_eye_effects(player_controller)
+        _sync_minds_eye_effects(player_controller, log_runtime=validate_text)
     except (AttributeError, TypeError, ValueError, RuntimeError) as exc:
         _log_error_once(f"Could not synchronize Mind's Eye accuracy: {exc}")
     try:

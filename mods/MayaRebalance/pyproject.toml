@@ -12,7 +12,7 @@ Credits and references:<br>\
 - Skill Scaling Patch: 55tumbl; historical scaling research reference. Current Scorn/Ruin bonus curves are defined by MayaRebalance.<br>\
 - Elemental Banshee Maya: 55tumbl; historical native-graph reference; the former Immolate graph adaptation was replaced by an independent dispatcher. See DEVELOPMENT.md.<br>\
 - Borderlands PythonSDK / bl-sdk and the BLCM / OpenBLCMM community.<br><br>\
-Own contributions: all rights reserved; see LICENSE.md. Third-party terms remain applicable.<br>\
+Personal gameplay use is permitted. Prior written permission is required to reuse any original code. See LICENSE.md; third-party terms remain applicable.<br>\
 Additional references and links are in the README. The reference mods are not bundled.<br>\
 Co-op has not been validated. Restart the game to fully disable.\
 """

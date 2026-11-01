@@ -115,7 +115,4 @@ Detailed investigation history and attribution are documented in
 
 ## License
 
-**All rights reserved** for Kgx37b9's original contributions for now; see
-[LICENSE.md](LICENSE.md). This is not a blanket license for third-party work.
-Third-party conditions remain applicable where third-party material is used.
-The recorded provenance and replacement history are described in DEVELOPMENT.md.
+You may download and use the official, unmodified release for your own gameplay. Prior written permission from Kgx37b9 is required before reusing any part of the project's original code or other original material. Redistribution and modified releases are not permitted. Third-party material remains subject to its own terms; see [LICENSE.md](LICENSE.md).

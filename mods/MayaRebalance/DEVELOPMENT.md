@@ -131,8 +131,9 @@ serving as evidence of permission. Original reference packages are not bundled.
   engine, prove final damage values or certify co-op.
 - Solo user reports confirm many earlier behaviors; the newest numerical and
   Backdraft changes still require targeted in-game comparisons after restart.
-- Phaselock's configured 1.75 scale is not proof of +75% versus every setup.
-  Verify native baseline, linked inputs and load order before
+- Phaselock's configured 1.75 scale is not proof of +75% versus every setup:
+  the earlier UCP configuration uses a different scale (25) on a relevant direct
+  damage behavior. Verify native baseline, linked inputs and load order before
   asserting a measured increase. No gameplay change was made during this review.
 - Clean logs are not frame-time measurements. Test repeated menu/re-entry,
   class-mod swaps, respecs and high-projectile/status fights separately.
@@ -508,3 +509,49 @@ The additional `Immolate final damage` line reports `Expected`,
 `NativeBeforeCorrection`, `FinalHealth`, and `FinalShield` once per window.
 `FinalHealth + FinalShield` should equal `Expected`, including for critical hits.
 
+
+
+## Phaselock combat-load review - 29 October 2026
+
+The user located the remaining hitches during shots and concurrent effects,
+rather than primarily at cast entry. The current SDK log (last inspected at
+19:28 local time) records Maya 1.0 and support 0.6.15 loading and entering the
+world; it contains no Phaselock combat trace or frame-time measurement.
+BSABT reports a missing spawnpoint.json, which is not evidence of this hitch.
+
+The received-damage modifier pool formerly prepared all six source fields on
+its first eligible hit at each nesting depth. It now grows only for the native
+source fields actually requested. All allocated rows remain in the pool used
+by the existing orphan-recovery scan; nested suspension/restoration and native
+readback checks remain intact. Unknown/custom sources still prepare and use
+all six fields. Each completed allocation is retained if a later one fails.
+
+A deterministic comparison against the previous installable package simulated
+300 interleaved bullet, skill and status-effect hits with the same bonus:
+
+| Operation | Previous package | Current source |
+| --- | ---: | ---: |
+| AttributeModifier allocations | 6 | 3 |
+| Modifier-stack membership checks | 2994 | 2094 |
+| Native add/remove operations | 600 | 600 |
+
+The roughly 30% reduction concerns stack-check calls in this specific fixture,
+not frame time, FPS, all SDK requests or a fully populated six-source pool.
+
+Mind's Eye detailed diagnostics formerly inspected weapon contexts/stacks on
+all quarter-second maintenance passes even when no log was emitted. These
+reads now run with the existing one-second validation; effect/rank maintenance
+still runs every quarter second. Psychic Shriek also excludes distant pawns
+before health/opinion calls without caching actor wrappers or skipping traces
+for eligible nearby hostiles.
+
+Validation: syntax plus 20 focused regressions (pool growth/reuse, custom-source
+fallback, nested Cloud Kill, orphan recovery, rejection/exception cleanup,
+class-mod grade refresh and area/trace eligibility). No game, co-op or FPS
+certification is implied. The optional synchronous capture helper remains a
+future diagnostic option; no asynchronous stack-sampling watchdog was added.
+
+Manual follow-up: with the game closed, replace MayaRebalance.sdkmod, reopen,
+and repeat shots during Phaselock against the same group and with the same
+weapon/settings. Compare with and without concurrent Cloud Kill/ricochets and
+check that debuffs, Immolate damage and subsequent casts still behave normally.

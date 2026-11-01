@@ -1,5 +1,35 @@
 # Changelog
 
+
+## 1.0 - Phaselock combat-load review, 29 October 2026
+
+- License clarification: personal gameplay use is permitted; prior written permission is required to reuse original project code or material. Third-party rights remain separate. No gameplay behavior changed.
+
+- Allocate received-damage modifiers only for native damage sources actually
+  encountered at each nesting depth. Unknown sources still use all six fields;
+  interrupted-hit recovery still checks every modifier already in that pool.
+- Sample detailed Mind's Eye runtime diagnostics with the existing one-second
+  validation pass. Gameplay effect maintenance remains at its previous cadence.
+- Reject distant Psychic Shriek area candidates before native health/opinion
+  queries, retaining the original radius, line-of-sight and hostility checks.
+- No balance, duration, HUD-position or class-mod rank changes. Offline call
+  counts improved; frame-time improvement still needs an in-game comparison.
+
+## 1.0 - additional current skill changes
+
+These entries document existing behavior; they do not introduce new balance changes.
+
+- **Restoration:** maximum-health bonus is 4% per effective rank (+20% at 5/5).
+  Shooting allies to heal them remains part of the native skill.
+- **Mind's Eye:** replaces the melee-damage bonus with +5% Accuracy per effective
+  rank (+25% at 5/5), implemented through a negative WeaponSpread modifier of
+  0.05 per rank. The native critical-hit damage bonus is preserved. Equipped
+  class-mod ranks also scale the accuracy effect.
+- **Sweet Release:** healing-orb base projectile speed increases from 800 to 1200
+  (+50%). Healing, homing and the native trigger are unchanged. The former
+  experimental critical-hit healing effect described in historical entries is
+  not part of the current version.
+
 ## 1.0 - Immolate follow-up review, 28 October 2026
 
 - User solo tests and three sampled SDK summaries confirm independent fire
