@@ -1,5 +1,25 @@
 # Changelog
 
+## 1.0.9 - 2026-11-03
+
+- Correct the unusually large transferable Voracidous/Chief Ngwatu shield in UVHM at its dedicated native attribute. Calibrate the scale from the measured 11.00 billion shield to about 11.31 million at default settings, 75% of Voracidous' measured 15.08 million HP. Preserve the native transfer and leave other shields unchanged. Fresh-encounter verification is pending.
+
+## 1.0.8 - 2026-11-03
+
+- Fix the slag-audio cleanup gap after death: the native `Died` event records only controller, pawn and world addresses, and confirmed deaths keep a pending cleanup until a different live pawn appears. At that point, check active local slag and post only the exact local slag stop event. Do not touch the dead pawn or play sound during teardown.
+- Preserve the respawn marker if an enemy's slag ends during respawn; discard it on world travel. The installed 1.0.7 log showed no cleanup message during the reported death/respawn case. Thirteen focused audio and 51 adjacent UVHM tests pass offline; in-game confirmation remains pending.
+
+## 1.0.7 - 2026-11-03
+
+- Fix a gap in orphan slag-audio cleanup: a slag status ending on an enemy now arms the same local-only cleanup check. The previous hook only armed it when the player was slagged, while the reported loop can follow slag applied to an enemy.
+- Preserve active slag on the local player and NPC audio; do not add audio-component scans, per-shot work or a new timer. Ten focused audio and 51 adjacent UVHM tests pass offline. In-game confirmation is pending.
+
+## 1.0.6 - 2026-11-03
+
+- Add a UVHM ammo-pack drop slider under Resources and Storage: 1x-5x, default 2x. At 1x, leave the native drop field untouched. The selected value is frozen until a full restart.
+- Raise only Hyperius' own health multiplier from 56 to 98 (+75%) while retaining party-size normalization and leaving shields, other bosses and phases unchanged. The ~13.0M solo HP figure is an estimate from the previously reported ~7.4M observation and awaits in-game confirmation.
+- Add focused option and raid-health regression checks.
+
 
 Version history for EndgameQoLRebalance. Earlier entries retain their historical names and behavior.
 

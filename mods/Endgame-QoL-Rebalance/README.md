@@ -1,6 +1,6 @@
-# EndgameQoLRebalance 1.0.5
+# EndgameQoLRebalance 1.0.9
 
-Configurable endgame balance and quality-of-life settings for **Borderlands 2**. Version **1.0.5** by **Kgx37b9**.
+Configurable endgame balance and quality-of-life settings for **Borderlands 2**. Version **1.0.9** by **Kgx37b9**.
 
 The mod offers level rules for enemies, loot, missions and vendors; growth sliders; UVHM and raid-boss balance; a Grog Nozzle quest reward; gold minimap stars for rare loot; and resource-capacity adjustments. Settings take effect after a full game restart. The installable runtime uses one Python file.
 
@@ -9,12 +9,12 @@ The mod offers level rules for enemies, loot, missions and vendors; growth slide
 | Menu category | Controls | Default |
 | --- | --- | --- |
 | Level Scaling | Enemy/loot minimum and maximum, mission minimum, on-level vendors, new-item level-80 cap | See [Level Scaling](#level-scaling) |
-| Resources and Storage | Independent backpack, personal bank, sniper/shotgun ammo and 1000-Eridium-cap switches | All on |
+| Resources and Storage | Independent backpack, personal bank, sniper/shotgun ammo and 1000-Eridium-cap switches; UVHM ammo-pack drop slider (1x-5x) | Switches on; drops 2x |
 | Rare Loot Minimap Stars | Gold markers for Legendary, Pearlescent, Seraph and Effervescent drops | On |
 | Game Scaling | Global health/damage growth: 1%-20% per level | 5% |
 | Money Scaling | Money/price growth: 1%-20% per level | 5% |
 | UVHM Balance | Enemy health and shields, passive regeneration, loot, vehicle damage, ammo drops and slag | On; health/shields 2x |
-| Raid Boss Health | Party-size health adjustment and Master Gee/Dexiduous multipliers | On |
+| Raid Boss Health | Party-size health adjustment, Master Gee/Dexiduous multipliers and Voracidous' UVHM shield | On |
 | Grog Nozzle Mission Reward | Add the Grog Nozzle to the existing quest rewards | On |
 | Level Difference Corrections | Separate switches for higher-level enemy resistance, higher-level enemy damage and elemental status chance | All on |
 
@@ -22,7 +22,7 @@ The three level-difference switches affect only penalties caused by level differ
 
 The backpack begins at **22 slots** and its purchased SDUs add **3, 3, 4, 4, 4, 5, 5, 5 and 15**. The personal bank begins at **25 slots** and its SDUs add **5, 5, 10, 15 and 20 for each further upgrade**. Sniper ammo capacity is **72 + 24 per SDU**; shotgun capacity is **140 + 30 per SDU**. Backpack and bank changes preserve existing upgrades and apply to supported local solo sessions. Ammo capacity applies in every playthrough. The four-slot shared stash is unchanged.
 
-The UVHM health and shield slider ranges from **1x to 4x** in steps of **0.25x**. Badass enemies retain the native health proportion: regular enemies at 2x correspond to badass enemies at 1.3x. Boss phases and scripted healing remain. Player vehicle weapon damage is 3x, ammo drops are 2x, and passive enemy UVHM regeneration is removed. Slag lasts seven seconds, slows NPC movement by 30% and weapon fire rate by 25%, and does not amplify damage. The slag slow does not affect players. Melee and special-attack speed are unchanged.
+The UVHM health and shield slider ranges from **1x to 4x** in steps of **0.25x**. Badass enemies retain the native health proportion: regular enemies at 2x correspond to badass enemies at 1.3x. Boss phases and scripted healing remain. Player vehicle weapon damage is 3x. Ammo-pack drops use the Resources and Storage slider (1x-5x, default 2x); 1x leaves native drops unchanged. This slider applies only while UVHM Balance is enabled. Passive enemy UVHM regeneration is removed. Slag lasts seven seconds, slows NPC movement by 30% and weapon fire rate by 25%, and does not amplify damage. The slag slow does not affect players. Melee and special-attack speed are unchanged.
 
 The Grog Nozzle is added to *The Beard Makes The Man* rewards without removing XP, money or other rewards. Completed quests do not receive a retroactive item.
 
@@ -41,7 +41,9 @@ The values below are relative weights, not direct drop percentages.
 
 ## Raid Boss Health
 
-The toggle normalizes **Hyperius, Master Gee, Voracidous and Pyro Pete** in all playthroughs, independently of UVHM Balance. It also sets **Master Gee's UVHM own health multiplier to 1,000** (previously 3,500) and **Dexiduous' class-base multiplier to 2,500** (previously 100,000). Master Gee's native class coefficient outside UVHM is unchanged; Dexiduous keeps its existing player-count scaling. Original health-pool definitions, scripted phases/heals, shields, damage, experience and loot are preserved. This does not rewrite the current HP of an already spawned boss.
+The toggle normalizes **Hyperius, Master Gee, Voracidous and Pyro Pete** in all playthroughs, independently of UVHM Balance. It raises **Hyperius' own health multiplier from 56 to 98 (+75%)**, and sets **Master Gee's UVHM own health multiplier to 1,000** (previously 3,500) and **Dexiduous' class-base multiplier to 2,500** (previously 100,000). Master Gee's native class coefficient outside UVHM is unchanged; Dexiduous keeps its existing player-count scaling. It also reduces Voracidous and Chief Ngwatu's shared UVHM shield using its own native attribute. Other shields, scripted phases/heals, damage, experience and loot are preserved. This does not rewrite the current HP or shield of an already spawned boss.
+
+Voracidous' shield change is calibrated from the measured 11,004,751,872 shield and 15,078,746 boss HP at the default 5% growth and 2x UVHM durability settings. The target is approximately 11.31 million transferable shield (75% of boss HP) in that same setup. It changes the native `MainGameRefs.Attributes.Att_VoracidousShield_PT3` scale to 0.001027652, leaving the transfer mechanic intact. This is an estimate until a fresh encounter is measured in game; other growth and UVHM durability settings can yield different totals.
 
 The native player-count attribute reads `GameInfo.EffectiveNumPlayers`. This policy adds a private attribute reading `GameInfo.NumPlayers` and evaluates the native health-weight table against both. It never changes either global counter or the original weight table:
 
@@ -62,17 +64,17 @@ HP(level) = B(level) * K
 K = own boss multiplier * UVHM health factor * player health weight
 ```
 
-`K` is the effective multiplier; it already includes the boss's own multiplier. Do not multiply by both again. Example, Hyperius in the adopted UVHM profile: `56 * 1.3 * 8 = 582.4` before normalization; with one real player, `R = 2 / 8 = 0.25`, so `K = 145.6`. At level 92 this former estimate is `12,765.129723 * 145.6 = approximately 1,858,603 HP`; the current user-reported solo observation is about 7.4M.
+`K` is the effective multiplier; it already includes the boss's own multiplier. Do not multiply by both again. Example, Hyperius after the new adjustment: `98 * 1.3 * 8 = 1,019.2` before normalization; with one real player, `R = 2 / 8 = 0.25`, so `K = 254.8`. At level 92 the simplified formula projects `12,765.129723 * 254.8 = approximately 3,252,555 HP`. The pre-adjustment solo observation was about 7.4M, so a more practical estimate after the +75% change is about 13.0M. The simplified formula does not capture every runtime contribution.
 
 For another growth setting, replace `1.05` with `1 + growth_percent / 100`. During initial map setup, a transient zero real-player count uses the solo weight.
 
-The following retains the former solo planning projection for comparison. It uses growth 1.05 and UVHM health slider 2.00 (badass 1.30). Level 1 is hypothetical, not a legal spawn level. Runtime testing found that most raid bosses have about 75% more health than this target. The updated reference column applies that approximate correction; only Pyro Pete and Voracidous have exact SDK-log readings recorded below. Hyperius is listed separately at the user-reported solo value of about 7.4M. Other corrected figures are estimates, not per-boss measurements.
+The following shows the simplified solo planning projection; Hyperius uses its newly selected multiplier, while other rows retain their prior projections. It uses growth 1.05 and UVHM health slider 2.00 (badass 1.30). Level 1 is hypothetical, not a legal spawn level. Runtime testing found that most raid bosses have about 75% more health than this target. The updated reference column applies that approximate correction; only Pyro Pete and Voracidous have exact SDK-log readings recorded below. Hyperius is listed separately with its pre-adjustment observed value and the new +75% estimate. Other corrected figures are estimates, not per-boss measurements.
 
-| Raid boss | Own multiplier | Effective K, solo | Hypothetical level-1 HP | OP10 level | Former projection | Updated observed/reference HP |
+| Raid boss | Own multiplier | Effective K, solo | Hypothetical level-1 HP | OP10 level | Formula projection | Updated observed/reference HP |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
 | Terramorphous | 1,000 | 3,000 | 162,257 | 92 | 38,295,389 | ~67,016,931* |
 | Vermivorous | 200 | 520 | 28,124 | 93 | 7,018,844 | ~12,282,977* |
-| Hyperius | 56 | 145.6 | 7,875 | 92 | 1,858,603 | ~7,434,412 (user-reported solo value) |
+| Hyperius | 98 | 254.8 | ~13,781 | 92 | ~3,252,555 | ~13,010,221 (estimate from pre-adjustment observation) |
 | Master Gee | 1,000 | 3,000 | 162,257 | 92 | 38,295,389 | ~67,016,931* |
 | Pyro Pete | 338 | 1,014 | 54,843 | 92 | 12,943,842 | 22,781,064 (measured) |
 | Voracidous | 225 | 675 | 36,508 | 92 | 8,616,463 | 15,078,746 (measured) |
@@ -84,13 +86,13 @@ The following retains the former solo planning projection for comparison. It use
 | Invincible Son of Crawmerax (raid) | 180 | 468 | 25,312 | 93 | 6,316,959 | ~11,054,678* |
 | Haderax | 1,200 | 3,600 | 194,708 | 92 | 45,954,467 | ~80,420,317* |
 
-*Non-Hyperius corrected figures are approximate +75% references based on the observed trend, not direct HP captures for each boss. Pyro Pete and Voracidous are exact log readings from level 92 solo encounters. Hyperius at about 7.4M is the user-reported solo value. The three dragons affected by Boost have a theoretical 20-level increase in the native level-up behavior; level 113 remains a projection of 93 + 20.*
+*Non-Hyperius corrected figures are approximate +75% references based on the observed trend, not direct HP captures for each boss. Pyro Pete and Voracidous are exact log readings from level 92 solo encounters. Hyperius at about 7.4M was the user-reported solo value before its new +75% multiplier; about 13.0M is the unverified proportional estimate after the change. The three dragons affected by Boost have a theoretical 20-level increase in the native level-up behavior; level 113 remains a projection of 93 + 20.*
 
-The recorded solo log values for Pyro Pete and Voracidous are about 76% and 75% above the former projections. This points to a systematic mismatch in the estimate; the table marks the other +75% values as approximations until individually measured. Hyperius is treated separately because its roughly 7.4M solo health is reported as expected for one player. These observations do not by themselves identify which runtime multiplier causes the difference.
+The recorded solo log values for Pyro Pete and Voracidous are about 76% and 75% above the former projections. This points to a systematic mismatch in the estimate; the table marks the other +75% values as approximations until individually measured. Hyperius is treated separately because its previously observed ~7.4M solo health was lower than the desired target; its own multiplier is now raised by 75%. These observations do not by themselves identify which runtime multiplier causes the difference.
 
 Health mechanics to account for before further balance changes: Hyperius has protection/enrage phases; Gee relies on acid and a separate shield; Pete has shield/helmet phases; Voracidous receives Ngwatu's shield and has an enrage transition. Healianth heals other dragons, Boost raises their levels, and Incinerator has protected/reflecting phases. Son of Crawmerax has scripted healing transitions, Haderax can recover large amounts of health, and Dexiduous relies on vulnerable hit regions. Passive UVHM regeneration removal does not remove these scripted mechanics.
 
-Confirm in a fresh encounter after a complete restart: solo HP versus the same boss/level with the toggle off, then actual party-size scaling. Do not use a boss damaged before installation as a reference. The implementation has offline tests; it has not yet been validated against raid HP in the engine.
+Confirm in a fresh encounter after a complete restart: solo HP versus the same boss/level with the toggle off, then actual party-size scaling. For Voracidous, measure Chief Ngwatu's shield before transfer and Voracidous' shield after transfer; the predicted shield at the reference settings is about 11.31 million. Do not use a boss damaged before installation as a reference. The shield correction has offline tests but still needs in-game verification.
 
 ## Backpack Capacity
 
@@ -169,7 +171,7 @@ The module handles newly generated hostile AI, equipment pools, mission item rew
 
 Restart after changing choices, then spawn new enemies/items, open a vendor and accept an unlocked mission to test. Existing equipment and accepted mission levels are not a reliable test of the new-generation policy.
 
-Slag audio follows the local status lifecycle. If slag ends, the UVHM feature ensures its local looping sound is stopped without changing other audio or muting an active slag effect. This cleanup is armed by local slag events and uses the existing maintenance budget; it does not scan audio components during gameplay. Co-op remains unvalidated.
+Slag audio cleanup is armed when slag ends on the player or an enemy, and after a confirmed local death it waits for the replacement pawn. After checking that the local player has no active slag, the UVHM feature stops only the local slag loop. The existing maintenance pass handles the check without scanning audio components during gameplay. In-game confirmation of the death/respawn fix and co-op validation are pending.
 
 ## Rare Loot Minimap Stars
 

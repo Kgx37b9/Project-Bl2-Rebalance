@@ -379,7 +379,9 @@ UVHM_HEALTH_STEP = 0.25
 # Native BalanceMod_PT3 has regular4.0 / badass2.6 at each vanilla threshold.
 UVHM_BADASS_HEALTH_RATIO = 2.6 / 4.0
 UVHM_PLAYER_VEHICLE_DAMAGE_MULTIPLIER = 3.0
-UVHM_AMMO_DROP_MULTIPLIER = 2.0
+UVHM_AMMO_DROP_DEFAULT = 2
+UVHM_AMMO_DROP_MIN = 1
+UVHM_AMMO_DROP_MAX = 5
 UVHM_COMMON_LOOT_START_LEVEL = 50
 UVHM_COMMON_LOOT_LATE_LEVEL = 61
 UVHM_COMMON_LOOT_EARLY_WEIGHT = 0.10
@@ -422,7 +424,8 @@ raid_health_enabled = BoolOption(
     "enabled", True, display_name="Enabled",
     description="Use the actual party size for Hyperius, Master Gee, Voracidous and Pyro Pete health "
                 "when native effective player count is inflated. Set Master Gee's UVHM health multiplier to 1000 "
-                "and Dexiduous' base health multiplier to 2500. Health only; preserve shields, damage and loot. " + RESTART_NOTE,
+                "and Dexiduous' base health multiplier to 2500. Raise Hyperius' health by 75%. "
+                "Reduce Voracidous' transferable UVHM shield; preserve other shields, damage and loot. " + RESTART_NOTE,
 )
 level_resistance_enabled = BoolOption(
     "higher_level_resistance", True, display_name="Higher-Level Enemy Resistance",
@@ -441,6 +444,12 @@ loot_stars_enabled = BoolOption(
     "enabled", True, display_name="Enabled",
     description="Show a custom gold star on the minimap for Legendary, Pearlescent, Seraph "
                 "and Effervescent equipment on the ground. " + RESTART_NOTE,
+)
+ammo_drop_multiplier = SliderOption(
+    "ammo_drop_multiplier", UVHM_AMMO_DROP_DEFAULT, UVHM_AMMO_DROP_MIN, UVHM_AMMO_DROP_MAX,
+    step=1, is_integer=True, display_name="UVHM Ammo Pack Drops (x)",
+    description="Multiplier for ammo from UVHM ammo packs. 1 leaves the native value unchanged; "
+                "default: 2. Requires UVHM Balance enabled. " + RESTART_NOTE,
 )
 ammo_capacity_enabled = BoolOption(
     "ammo_capacity", True, display_name="Ammo Capacity",
@@ -465,7 +474,7 @@ eridium_capacity_enabled = BoolOption(
 SUPPORT_OPTIONS = [
     LEVEL_CATEGORY,
     NestedOption("resources_storage", [backpack_capacity_enabled, bank_capacity_enabled,
-                                       ammo_capacity_enabled, eridium_capacity_enabled],
+                                       ammo_capacity_enabled, ammo_drop_multiplier, eridium_capacity_enabled],
                  display_name="Resources and Storage"),
     NestedOption("loot_stars", [loot_stars_enabled], display_name="Rare Loot Minimap Stars"),
     NestedOption("game_scaling", [game_growth], display_name="Game Scaling"),
@@ -485,6 +494,7 @@ _OPTION_VALUES = {
     "higher_level_status_chance": level_status_chance_enabled,
     "loot_stars": loot_stars_enabled,
     "ammo_capacity": ammo_capacity_enabled,
+    "ammo_drop_multiplier": ammo_drop_multiplier,
     "bank_capacity": bank_capacity_enabled,
     "backpack_capacity": backpack_capacity_enabled,
     "eridium_capacity": eridium_capacity_enabled,
@@ -492,6 +502,7 @@ _OPTION_VALUES = {
 }
 _DEFAULT_SETTINGS: dict[str, Any] = {
     key: UVHM_HEALTH_DEFAULT if key == "uvhm_enemy_health_multiplier" else
+    UVHM_AMMO_DROP_DEFAULT if key == "ammo_drop_multiplier" else
     GROWTH_DEFAULT_PERCENT if key.endswith("_percent") else True for key in _OPTION_VALUES
 }
 _DEFAULT_SETTINGS.update(LEVEL_DEFAULTS)
@@ -510,6 +521,14 @@ def _read_menu_settings() -> dict[str, Any]:
                 values[key] = round(value / UVHM_HEALTH_STEP) * UVHM_HEALTH_STEP
             except (TypeError, ValueError, OverflowError):
                 values[key] = UVHM_HEALTH_DEFAULT
+        elif key == "ammo_drop_multiplier":
+            try:
+                value = float(option.value)
+                if isinstance(option.value, bool) or not math.isfinite(value):
+                    raise ValueError("Invalid ammo drop multiplier")
+                values[key] = max(UVHM_AMMO_DROP_MIN, min(UVHM_AMMO_DROP_MAX, round(value)))
+            except (TypeError, ValueError, OverflowError):
+                values[key] = UVHM_AMMO_DROP_DEFAULT
         elif key.endswith("_percent"):
             try:
                 value = float(option.value)
@@ -537,6 +556,7 @@ def _freeze_session_settings() -> None:
         _session_settings = _read_menu_settings()
         _UVHM_SPECS = _uvhm_specs(
             health_multiplier=_session_settings["uvhm_enemy_health_multiplier"],
+            ammo_drop_multiplier=_session_settings["ammo_drop_multiplier"],
         )
 
 GLOBALS_PATH = "GD_Globals.General.Globals"
@@ -668,24 +688,32 @@ _slag_guard_owner: tuple[int, int] | None = None
 SLAG_AUDIO_STOP_PATH = "Ake_FX_Global.Ak_Stop_FX_Elemental_Slag_StatusEffect_lp"
 _slag_audio_type: int | None = None
 _slag_audio_pending: tuple[int, int, int] | None = None
+_slag_audio_respawn_pending = False
+_slag_audio_death_contexts: list[tuple[int, int, int] | None] = []
 _slag_audio_check_at = 0.0
 _slag_audio_notice_context: tuple[int, int, int] | None = None
 
 
-def _arm_local_slag_audio_cleanup(component: Any) -> None:
-    global _slag_audio_pending, _slag_audio_check_at
-    if _rules_suspended or not _settings()["uvhm_rebalance"]:
-        return
+def _arm_local_slag_audio_cleanup(component: Any, *, enemy_status_ended: bool = False) -> None:
+    global _slag_audio_pending, _slag_audio_respawn_pending, _slag_audio_check_at
+    if _rules_suspended or _slag_audio_respawn_pending or not _settings()["uvhm_rebalance"]:
+        return  # Preserve the dead-pawn marker until the replacement pawn is ready.
     controller = get_pc()
     if controller is None or controller.bDeleteMe:
         return
     pawn = controller.Pawn
-    if pawn is None or pawn.bDeleteMe or component.Owner != pawn:
+    if pawn is None or pawn.bDeleteMe:
+        return
+    owner = component.Owner
+    if owner is None or getattr(owner, "bDeleteMe", False):
+        return
+    if owner != pawn and not enemy_status_ended:
         return
     world = controller.WorldInfo
     if world is None or world.bDeleteMe:
         return
     _slag_audio_pending = (controller._get_address(), pawn._get_address(), world._get_address())
+    _slag_audio_respawn_pending = False
     # Audio startup can precede insertion into ActiveStatusEffects in this call.
     _slag_audio_check_at = time.monotonic() + 0.25
 
@@ -702,7 +730,33 @@ def observe_local_slag_end(component: Any, args: Any, _ret: Any, _func: Any) -> 
         return
     definition = args.ASE.StatusEffectDefinition
     if definition is not None and int(definition.StatusEffectType) == _slag_audio_type:
-        _arm_local_slag_audio_cleanup(component)
+        # The loop can remain on the local audio owner after slag ends on an enemy.
+        _arm_local_slag_audio_cleanup(component, enemy_status_ended=True)
+
+
+@hook("WillowGame.WillowPlayerPawn:Died", Type.PRE)
+def prepare_slag_audio_after_death(pawn: Any, _args: Any, _ret: Any, _func: Any) -> None:
+    candidate = None
+    if not _rules_suspended and _settings()["uvhm_rebalance"] and _slag_audio_type is not None:
+        controller = get_pc()
+        if controller is not None and not controller.bDeleteMe and controller.Pawn == pawn:
+            world = controller.WorldInfo
+            if world is not None and not world.bDeleteMe:
+                candidate = (controller._get_address(), pawn._get_address(), world._get_address())
+    # POST must not dereference a pawn that Died may already have detached.
+    _slag_audio_death_contexts.append(candidate)
+
+
+@hook("WillowGame.WillowPlayerPawn:Died", Type.POST_UNCONDITIONAL)
+def arm_slag_audio_after_death(_pawn: Any, _args: Any, ret: Any, _func: Any) -> None:
+    global _slag_audio_pending, _slag_audio_respawn_pending, _slag_audio_check_at
+    if not _slag_audio_death_contexts:
+        return
+    candidate = _slag_audio_death_contexts.pop()
+    if ret is True and candidate is not None and not _rules_suspended:
+        _slag_audio_pending = candidate
+        _slag_audio_respawn_pending = True
+        _slag_audio_check_at = time.monotonic() + 0.25
 
 
 SLAG_DURATION_SECONDS = 7.0
@@ -711,20 +765,33 @@ SLAG_FIRE_RATE_REDUCTION = 0.25
 
 
 def _finish_local_slag_audio(controller: Any, now: float) -> None:
-    global _slag_audio_pending, _slag_audio_notice_context
+    global _slag_audio_pending, _slag_audio_respawn_pending, _slag_audio_notice_context
     pending = _slag_audio_pending
     if _rules_suspended or pending is None or now < _slag_audio_check_at or controller is None:
         return  # No status event armed: no native queries or audio work.
     if not _settings()["uvhm_rebalance"] or _slag_audio_type is None:
         _slag_audio_pending = None
+        _slag_audio_respawn_pending = False
         return
     try:
         if controller.bDeleteMe or controller._get_address() != pending[0]:
             _slag_audio_pending = None
+            _slag_audio_respawn_pending = False
             return
         world, pawn = controller.WorldInfo, controller.Pawn
-        if (world is None or world.bDeleteMe or pawn is None or pawn.bDeleteMe
-                or (controller._get_address(), pawn._get_address(), world._get_address()) != pending):
+        if world is None or world.bDeleteMe or world._get_address() != pending[2]:
+            _slag_audio_pending = None
+            _slag_audio_respawn_pending = False
+            return
+        if pawn is None or pawn.bDeleteMe:
+            if not _slag_audio_respawn_pending:
+                _slag_audio_pending = None
+            return
+        pawn_address = pawn._get_address()
+        if _slag_audio_respawn_pending:
+            if pawn_address == pending[1]:
+                return  # Wait for the new pawn; old status may be torn down without End.
+        elif pawn_address != pending[1]:
             _slag_audio_pending = None
             return
         component = pawn.GetStatusEffectsComponent()
@@ -743,12 +810,16 @@ def _finish_local_slag_audio(controller: Any, now: float) -> None:
             return
         # End native per-type sound bookkeeping, then post the exact local
         # controller event that stopped the confirmed orphan in the live test.
-        component.StopEffectSound(_slag_audio_type, True)
+        if not _slag_audio_respawn_pending:
+            component.StopEffectSound(_slag_audio_type, True)
         controller.PostAkEvent(stop, True, False)
         _slag_audio_pending = None
+        was_respawn = _slag_audio_respawn_pending
+        _slag_audio_respawn_pending = False
         _errors.pop("Local slag audio cleanup", None)
         if _slag_audio_notice_context != pending:
-            unrealsdk.logging.info("[EndgameQoLRebalance] Local slag audio ended after status expiration")
+            reason = "respawn" if was_respawn else "status expiration"
+            unrealsdk.logging.info("[EndgameQoLRebalance] Local slag audio ended after " + reason)
             _slag_audio_notice_context = pending
     except (AttributeError, TypeError, ValueError, RuntimeError) as exc:
         message = str(exc)
@@ -952,12 +1023,12 @@ def _uvhm_health_fields(multiplier: float) -> dict[str, float]:
     }
 
 
-def _uvhm_player_support_fields() -> dict[str, Any]:
-    """Own absolute choices, not a multiplication of another mod's current values."""
-    return {
-        "PlayerVehicleWeaponDamageMultiplier": UVHM_PLAYER_VEHICLE_DAMAGE_MULTIPLIER,
-        "AmmoDropsPerPlayerMultiplier": _aid(UVHM_AMMO_DROP_MULTIPLIER),
-    }
+def _uvhm_player_support_fields(ammo_drop_multiplier: int) -> dict[str, Any]:
+    """Leave native ammo-drop settings untouched when the slider is at 1."""
+    fields = {"PlayerVehicleWeaponDamageMultiplier": UVHM_PLAYER_VEHICLE_DAMAGE_MULTIPLIER}
+    if ammo_drop_multiplier != 1:
+        fields["AmmoDropsPerPlayerMultiplier"] = _aid(float(ammo_drop_multiplier))
+    return fields
 
 
 def _uvhm_status_damage_effects() -> list[dict[str, Any]]:
@@ -1018,6 +1089,7 @@ def _uvhm_chest_loot_fields(level: int) -> dict[str, Any]:
 
 def _uvhm_specs(
     *, health_multiplier: float = UVHM_HEALTH_DEFAULT,
+    ammo_drop_multiplier: int = UVHM_AMMO_DROP_DEFAULT,
 ) -> dict[int, dict[str, Any]]:
     result = {}
     levels = sorted({level for level, _ in UVHM_CHEST_LOOT_WEIGHTS}
@@ -1029,7 +1101,7 @@ def _uvhm_specs(
             "AmplifiedDamageMultiplier": 1.0,
         }
         fields.update(_uvhm_health_fields(health_multiplier))
-        fields.update(_uvhm_player_support_fields())
+        fields.update(_uvhm_player_support_fields(ammo_drop_multiplier))
         fields["AttributeEffectsForPlayers"] = _uvhm_status_damage_effects()
         fields.update(_uvhm_common_loot_fields(level))
         fields.update(_uvhm_chest_loot_fields(level))
@@ -1773,8 +1845,14 @@ RAID_HEALTH_CLASSES = (
 RAID_PLAYER_COUNT_PATH = "D_Attributes.GameProperties.NumberOfPlayers"
 RAID_PLAYER_WEIGHT_PATH = "GD_Balance.WeightingPlayerCount.Enemy_HealthBoost_PerPlayerPerPlaythroughByChampion"
 RAID_HEALTH_ATTRIBUTE = "GD_Balance_HealthAndDamage.AIParameters.Attribute_HealthMultiplier"
+RAID_VORAC_SHIELD_PATH = "MainGameRefs.Attributes.Att_VoracidousShield_PT3"
+# Calibrated from the observed 11,004,751,872 shield and 15,078,746 boss HP
+# at the default 5% growth and 2x UVHM durability settings. The native
+# attribute controls both sides of the transferred shield, without pawn writes.
+RAID_VORAC_SHIELD_SCALE = 0.75 * 15_078_746.0 / 11_004_751_872.0
 RAID_DEX_CLASS = "GD_DrifterRaid.Character.CharClass_DrifterRaid"
 RAID_FIXED_HEALTH_MULTIPLIERS = {
+    RAID_HEALTH_CLASSES[0]: 98.0,  # Hyperius: native 56 * 1.75.
     "GD_Gladiolus_Balance.enemies.PawnBalanceModifier_Orchid_RaidShaman": 1000.0,
     RAID_DEX_CLASS: 2500.0,
 }
@@ -1950,6 +2028,10 @@ def _configure_raid_health(definition: Any, ratio: Any, *, playthroughs: bool) -
 def _apply_raid_health_rules(now: float) -> None:
     if not _settings()["raid_health"]:
         return
+    _check_target("Raid shield Voracidous", "DesignerAttributeDefinition", RAID_VORAC_SHIELD_PATH,
+                  lambda attribute: _configure_patch(attribute, {
+                      "BaseValue": {"BaseValueScaleConstant": RAID_VORAC_SHIELD_SCALE},
+                  }), now)
     shared: list[Any] = []  # Callback-local only; prepare once for loaded classes.
     def configure(definition: Any, playthroughs: bool) -> bool:
         if str(definition._path_name()) == RAID_DEX_CLASS:
@@ -2388,8 +2470,10 @@ def refresh_loot_stars(controller: Any) -> None:
 
 
 def _suspend_rule_maintenance() -> None:
-    global _rules_suspended, _rules_departing_context, _slag_audio_pending
-    _slag_audio_pending = None  # Discard primitive state; never play audio during teardown.
+    global _rules_suspended, _rules_departing_context, _slag_audio_pending, _slag_audio_respawn_pending
+    _slag_audio_pending = None
+    _slag_audio_respawn_pending = False
+    _slag_audio_death_contexts.clear()  # Discard primitive state; never play audio during teardown.
     _rules_suspended = True
     _rules_departing_context = _rules_active_context
 
@@ -2436,8 +2520,11 @@ def on_enable() -> None:
     global _next_check, _uvhm_signature, _uvhm_audit_cursor
     global _movement_snapshot, _movement_notice_at
     global _rules_suspended, _rules_active_context, _rules_departing_context
-    global _slag_audio_type, _slag_audio_pending, _slag_audio_notice_context, _slag_audio_check_at
+    global _slag_audio_type, _slag_audio_pending, _slag_audio_respawn_pending
+    global _slag_audio_notice_context, _slag_audio_check_at
     _slag_audio_type = _slag_audio_pending = _slag_audio_notice_context = None
+    _slag_audio_respawn_pending = False
+    _slag_audio_death_contexts.clear()
     _slag_audio_check_at = 0.0
     _movement_snapshot, _movement_notice_at = None, 0.0
     _rules_suspended, _rules_active_context, _rules_departing_context = True, None, None
@@ -2453,7 +2540,7 @@ def on_enable() -> None:
     _last_repair_notice.clear()
     _storage_status_messages.clear()
     unrealsdk.logging.info(
-        "[EndgameQoLRebalance] Loaded 1.0.5: configurable endgame balance, level differences, "
+        "[EndgameQoLRebalance] Loaded 1.0.9: configurable endgame balance, level differences, "
         "storage, ammo, Eridium and loot markers; restart-applied settings; "
         + json.dumps(_settings(), sort_keys=True)
     )
@@ -2547,6 +2634,7 @@ mod = build_mod(
     hooks=[refresh_frontend, prepare_game, refresh_game, prepare_class,
            maintain_rules, suspend_rules_for_departing_player,
            observe_local_slag_sound, observe_local_slag_end,
+           prepare_slag_audio_after_death, arm_slag_audio_after_death,
            prepare_grog_accept, prepare_grog_completion,
            *LEVEL_HOOKS, release_loot_stars,
            prepare_personal_bank_capacity, preserve_personal_bank_capacity, preserve_backpack_capacity],
