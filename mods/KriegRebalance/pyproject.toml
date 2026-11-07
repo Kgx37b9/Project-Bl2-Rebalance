@@ -1,0 +1,18 @@
+[project]
+name = "KriegRebalance"
+version = "1.0.12"
+authors = [{ name = "Kgx37b9" }]
+description = """\
+KriegRebalance 1.0.12 - Krieg skill rebalance / Release<br>\
+Author: Kgx37b9<br><br>\
+Rebalances selected Hellborn, Mania and Bloodlust skills while retaining their native triggers and skill-tree structure.<br><br>\
+Burn, Baby, Burn grants 20% Burn Damage per rank, plus another 10% per rank while on fire. Fuel the Rampage reduces direct self-damage by 9% per rank and grants 10% movement speed per rank for 12 seconds after direct self-damage, with a native HUD indicator. Special melee damage uses GameStage scaling through OP10. Bloody Revival tracks successful local Second Winds on the HUD. Blood Twitch regenerates reserve ammo instead of reducing recoil. Other changes include Blood Euphoria regeneration, Blood Overdrive, Pain is Power, Numbed Nerves, Raving Retribution, Pull the Pin and Silence the Voices adjustments.<br><br>\
+Requires Borderlands 2 and the modern Python SDK Mod Manager. Restart the game after installing or replacing this mod. Co-op has not been validated. Personal gameplay use is permitted; prior written permission is required to reuse any original code. See LICENSE.md.<br><nobr>Credits: Kgx37b9; bl-sdk contributors and the Borderlands modding community.</nobr>\
+"""
+
+[tool.sdkmod]
+name = "KriegRebalance"
+version = "1.0.12"
+supported_games = ["BL2"]
+coop_support = "Unknown"
+auto_enable = true
