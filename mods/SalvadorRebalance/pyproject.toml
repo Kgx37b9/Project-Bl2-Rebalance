@@ -1,0 +1,22 @@
+[project]
+name = "SalvadorRebalance"
+version = "1.0.1"
+authors = [{ name = "Kgx37b9" }]
+description = """\
+SalvadorRebalance 1.0.1 - Skill balance and off-hand fixes<br>\
+Author: Kgx37b9<br><br>\
+Rebalances Salvador's survivability, weapon bonuses and Gunzerking skills while preserving native class-mod ranks.<br>\
+Keep It Piping Hot gains damage and accuracy stacks during Gunzerking, with a native HUD counter. Asbestos grants temporary Fire Rate after receiving an elemental status effect.<br>\
+Berzerk replaces Come At Me, Bro with +85% Amp Damage, native damage resistance and a nonlethal health cost per shot while Gunzerking; shield regeneration is disabled.<br>\
+Fistful of Hurt applies Shock to you on use and makes enemies hit take 10% more damage from you for 8 seconds.<br>\
+Includes off-hand skill repairs, Rough Rider unequip cleanup and non-overlapping native HUD feedback. Double Your Fun remains unchanged.<br><br>\
+Requires Borderlands 2 and the modern Willow2 Python SDK Mod Manager. Fully restart after replacing files or disabling native changes. Co-op is not validated. See README.md and CHANGELOG.md for full details.<br>\
+Personal gameplay use is permitted; original code reuse requires prior written permission. See LICENSE.md.\
+"""
+
+[tool.sdkmod]
+name = "SalvadorRebalance"
+version = "1.0.1"
+supported_games = ["BL2"]
+coop_support = "Unknown"
+auto_enable = true
