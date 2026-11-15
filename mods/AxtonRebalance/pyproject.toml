@@ -1,0 +1,23 @@
+[project]
+name = "AxtonRebalance"
+version = "1.1"
+authors = [{ name = "Kgx37b9" }]
+description = """\
+AxtonRebalance 1.1 - Axton skill and Sabre Turret rebalance<br>\
+Author: Kgx37b9<br><br>\
+Reworks selected skills across Guerrilla, Gunpowder and Survival, adds Kill Mastery, and supports native class-mod skill ranks.<br><br>\
+Sabre Turret gains level-scaled damage, a 30-second base cooldown and 40% more base health. Revised turret upgrades add damage, utility and a non-stacking 20-meter Gemini defensive aura. Player changes include empowered magazines, aimed-hit stacks, life steal, shield-based bonuses and native HUD indicators. Overload grants 10% Magazine Size and 0.2% reserve ammo regeneration per second per skill point. Metal Storm grants a 6% chance per point not to consume ammo while active.<br><br>\
+Duty Calls grants up to 20 stacks from aimed weapon hits, each adding 0.5% critical damage and 0.4% reload speed per skill point. Stacks decay one at a time every 0.25 seconds after 3 seconds without aiming.<br><br>\
+Forbearance reduces enemy elemental status duration by 8% per point and grants 1% Life Steal per point from your own explosive or area damage, without requiring a deployed turret. Explosive damage from your own Sabre Turrets also heals you.<br><br>\
+Resourceful extends active turret duration by 1 second per skill point on enemy kills, without an accumulated extension limit, while retaining its incoming-damage cooldown recovery. Crisis Management grants 5% multiplicative damage and 6% native damage resistance per skill point while shields are depleted. Pressure grants its full 7% damage per point whenever shields are above zero, additive with Crisis Management, and up to 24% shield recharge delay reduction per point as shields deplete.<br><br>\
+Requires Borderlands 2 and the modern Python SDK Mod Manager. Restart after installation or updates. Disable conflicting Axton skill/tree changes in other mods. Co-op has not been validated; some custom effects handle only the local authority player. See README.md and CHANGELOG.md for details.<br><br>\
+Personal gameplay use is permitted; prior written permission is required to reuse original code. See LICENSE.md.<br>\
+Credits: Kgx37b9; bl-sdk contributors; UCP and 55tumbl's Skill Scaling Patch as research references for native turret damage inputs.\
+"""
+
+[tool.sdkmod]
+name = "AxtonRebalance"
+version = "1.1"
+supported_games = ["BL2"]
+coop_support = "Unknown"
+auto_enable = true
