@@ -1,5 +1,63 @@
 # Changelog
 
+## 1.0.17 - Raid pearl native spawn argument binding
+
+- Increase starting shotgun reserve capacity from 140 to 150; retain +30 per SDU. Change the final two backpack SDUs from +5/+15 to +10/+10, keeping the initial 22 slots and final 70 slots.
+- After the author confirmed a Pearlescent drop in gameplay, change the extra pool's chance from 100% to its final 1%. Preserve the 12 equal-weight choices, quantity 1 and one roll per completed Dragons encounter. Keep diagnostics, treat empty rolls as normal and remove temporary test wording. Version unchanged by request.
+- Fix the private SpawnItems invocation to bind all native parameters by name. The first Ancient Dragons test reached the prepared 12-item pool and the encounter callback, then failed with a UObject-to-WrappedStruct cast before a drop could be verified. Positional argument order inferred from the legacy headers was unsuitable for the reflected SDK call.
+- Keep the temporary 100% chance, one pearl per completed Dragons encounter, private pool contents and original loot unchanged. Preserve no-retry protection for partial failures.
+- Replace the permissive spawn mock with a strict keyword-only native-call contract and explicit struct checks. Twenty-eight focused raid-pearl tests passed; native drop confirmation after updating and restarting is pending. No package generated or installed.
+
+## 1.0.16 - Independent raid Pearlescent drop test
+
+- Add an independent Raid Boss Pearlescent Drop toggle, enabled by default. Private pool: all 12 pearls, equal weights, quantity 1. **Temporary test chance: 100%; intended final chance: 1%.** No original loot pool, shared drop-rate attribute or quantity is edited.
+- Run the extra native spawn after successful raid-boss deaths; award the Ancient Dragons only once for their completed encounter through the native unique-loot reward behavior. Distinguish raid Son of Crawmerax from the story variant. Deduplicate superclass/repeated callbacks and validate local authority, weak actor/world references and travel context.
+- Preserve the existing new-item generation scope and level-80 cap. Require every pearl balance before preparing the pool, avoid partial subsets, and never replay a partially executed roll.
+- Add temporary diagnostics for assets, roll settings, generated weapons, pickups, unchanged actor pool rows, private-definition drift and unexpected results. No additional tick scan/timer; stable definitions are reused. Native gameplay confirmation is pending; no SDKMOD generated or installed.
+- Thirty focused/adjacent checks passed: private pool/drop behavior, encounter deduplication, failure cleanup, item-cap integration, menu structure and SDK settings persistence.
+
+## 1.0.15 - 2026-11-14
+
+- Replace unsupported fractional XP sliders with integer percentage sliders: 100%-500%, step 10%, default 100%. Preserve option identifiers and migrate previous factor settings (2.0x becomes 200%), including float precision noise. Percentage bars are the author's confirmed preference.
+- A live capture on 1.0.14 recorded three combat reward events without any ExpEarn hook event, while the UVHM setting was 2.0 and the native XP pool scale remained 1.0 with no modifiers. This confirms the old route failed in that captured session; the new pool implementation still needs gameplay confirmation.
+- Replace the ExpEarn replay hook after the report that 1.0.14 did not increase XP with Exp Adjuster disabled. Apply a private modifier to the native player's ExpAllPointsScale; preserve other XP modifiers, native rounding, reward definitions, thresholds and caps.
+- Verify configuration on spawn and in existing periodic maintenance. Avoid per-award Python work and repeated writes for stable factors; suspend across travel, use weak references and reacquire the context after native callbacks. Log the native and effective XP scales once per mode/factor.
+- Focused tests cover decimal controls, saved settings, native modifier composition, idempotence, mode/pool changes, teardown and failures. Actual combat/mission rewards and remote co-op still require gameplay validation. No SDKMOD generated or installed.
+
+## 1.0.14 - 2026-11-14
+
+- Add Experience Scaling with separate NVHM, TVHM and UVHM sliders, each ranging from 1x to 5x in 0.1x steps, default 1x. Settings follow the existing restart policy.
+- Multiply positive character XP once through native ExpEarn, preserving its source/type, rounding integer XP once and retaining native level thresholds/caps. Cover combat, bosses, mission and generic XP grants without editing reward definitions or adding periodic work.
+- Validate local authority, playthrough and world context; guard replay re-entry and block the original call after any ordinary replay failure to prevent duplicate grants. Neutral settings perform no native player lookup; activation logs once per mode.
+- Document cumulative interaction with other XP mods and unmodified quest previews. Twenty focused/adjacent checks passed, including SDK options/persistence. Native gameplay and remote co-op validation remain pending; no package generated or installed.
+
+## 1.0.13 - 2026-11-12
+
+- Spread periodic definition verification over 16 small maintenance slices. Keep each target on a complete cycle without batching all native lookups/configuration into the same frame; startup and direct event checks remain immediate.
+- Reuse the freshly resolved static raid-health ratio during a maintenance cycle instead of rebuilding its helper graph for separate slices. Continue revalidating dependencies at the original interval and on explicit full checks; retain no actor, world or native object wrapper in the scheduler.
+- Preserve the two-second storage/player/slag-audio interval and existing minimap rendering cadence. No balance or menu-option changes.
+- A live 35-second capture measured the original support maintenance peak at 12.718 ms, versus less than 3.4 ms for the instrumented Axton routines. This identifies a periodic workload, but does not prove it explains every reported 4–5-second hitch. Thirty-eight focused/adjacent checks passed; frame-time improvement after installation remains pending.
+
+## 1.0.12 - 2026-11-11
+
+- Add rocket-launcher reserve capacity to the existing Ammo Capacity toggle: 21 base and SDU gains +3, +3, +3, +4, +4, +5, +5, reaching 48 at seven purchased upgrades. Existing purchased upgrades count automatically.
+- Use a private native conditional initializer with exact integer upgrade totals. Preserve native upgrade ownership/count notifications, pool upgrade count, magazine size, SDU prices and other ammo rules. No per-shot hook, save rewrite or per-player capacity polling.
+- Ten focused/adjacent ammo checks passed; Python syntax and metadata validated. Gameplay confirmation remains pending; no package generated or installed.
+
+## 1.0.11 - 2026-11-06
+
+- Fix the remaining event-detection gap in orphan local slag audio: use the current controller's Components list in the existing two-second maintenance when no cleanup is armed. Check only the exact slag loop, retain a short grace period, and verify the absence of native/replicated slag again before stopping it. No global audio/component scan or additional tick hook.
+- Observe the native Actor.PlayAkEvent entry with its InSoundCue argument, alongside the existing audio entry points. Preserve pause, world-owner, respawn and teardown guards.
+- Live Digistruct Peak snapshots at16:30 and16:33 local time showed zero active status/sound bookkeeping, no pending cleanup, and the slag loop active on a controller-owned WillowAkComponent registered in its two-element Components list. Manually arming cleanup ended the sound at16:36:30, confirmed by the user. These prove the missed-arm case and successful stop; the exact original emitter was not captured.
+- Forty-five targeted audio, maintenance and lifecycle checks passed. The new automatic recovery still requires installation/restart and in-game validation; no Krieg skill balance changed.
+
+## 1.0.10 - 2026-11-05
+
+- Close a missing-trigger path in local slag audio cleanup. Observe the exact slag-loop event on the current local controller through the native Actor audio entry points, in addition to status-component callbacks. Reject other actors before reading event arguments; do not scan audio components during gameplay.
+- Repeated starts in the same context no longer postpone an already scheduled cleanup check. Preserve active/replicated slag, death/respawn markers and teardown guards; unrelated audio is untouched.
+- Live diagnosis during Krieg gameplay found zero active statuses and no pending cleanup, while the known slag loop was playing on the controller. Manually arming the existing cleanup stopped it, confirmed by the SDK log and the user. Automatic detection through the new observer still needs confirmation after installing and restarting.
+- Twenty focused audio lifecycle tests and four adjacent manual-stop checks passed. No Krieg skill effects or balance values changed.
+
 ## 1.0.9 - 2026-11-03
 
 - Correct the unusually large transferable Voracidous/Chief Ngwatu shield in UVHM at its dedicated native attribute. Calibrate the scale from the measured 11.00 billion shield to about 11.31 million at default settings, 75% of Voracidous' measured 15.08 million HP. Preserve the native transfer and leave other shields unchanged. Fresh-encounter verification is pending.

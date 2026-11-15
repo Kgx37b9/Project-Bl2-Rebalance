@@ -16,7 +16,7 @@ from typing import Any
 import unrealsdk  # pyright: ignore[reportMissingModuleSource]
 from mods_base import BoolOption, DropdownOption, NestedOption, ObjectFlags, RestartToDisable, SliderOption, build_mod, get_pc, hook
 from unrealsdk.hooks import Block, Type, prevent_hooking_direct_calls  # pyright: ignore[reportMissingModuleSource]
-from unrealsdk.unreal import WrappedStruct, ZNameProperty  # pyright: ignore[reportMissingModuleSource]
+from unrealsdk.unreal import WeakPointer, WrappedStruct, ZNameProperty  # pyright: ignore[reportMissingModuleSource]
 
 
 
@@ -453,7 +453,8 @@ ammo_drop_multiplier = SliderOption(
 )
 ammo_capacity_enabled = BoolOption(
     "ammo_capacity", True, display_name="Ammo Capacity",
-    description="Sniper reserve: 72 base and +24 per SDU. Shotgun reserve: 140 base and +30 per SDU. "
+    description="Sniper reserve: 72 base and +24 per SDU. Shotgun reserve: 150 base and +30 per SDU. "
+                "Rocket reserve: 21 base, then +3/+3/+3/+4/+4/+5/+5 (48 maximum). "
                 "Preserves purchased upgrade counts and magazine sizes. " + RESTART_NOTE,
 )
 bank_capacity_enabled = BoolOption(
@@ -463,7 +464,7 @@ bank_capacity_enabled = BoolOption(
 )
 backpack_capacity_enabled = BoolOption(
     "backpack_capacity", True, display_name="Backpack Capacity",
-    description="Backpack starts with 22 slots; SDUs add +3, +3, +4, +4, +4, +5, +5, +5 and +15. "
+    description="Backpack starts with 22 slots; SDUs add +3, +3, +4, +4, +4, +5, +5, +10 and +10. "
                 "Solo play; preserves larger existing capacity. " + RESTART_NOTE,
 )
 eridium_capacity_enabled = BoolOption(
@@ -471,8 +472,176 @@ eridium_capacity_enabled = BoolOption(
     description="Raise the Eridium carrying limit from 500 to 1000 on compatible Windows BL2 builds. "
                 "The executable is checked before a memory-only change. " + RESTART_NOTE,
 )
+raid_pearls_enabled = BoolOption(
+    "enabled", True, display_name="Enabled",
+    description="Add one independent Pearlescent weapon roll per raid-boss death. "
+                "1% chance per qualifying kill or completed Ancient Dragons encounter. "
+                "Uses all 12 Pearlescent weapons with equal weights. Original loot is preserved. " + RESTART_NOTE,
+)
+XP_MODES = ("NVHM", "TVHM", "UVHM")
+XP_KEYS = tuple("xp_" + mode.lower() + "_multiplier" for mode in XP_MODES)
+
+
+def _sanitize_xp_multiplier(raw: Any) -> float:
+    try:
+        value = float(raw)
+        if isinstance(raw, bool) or not math.isfinite(value):
+            return 1.0
+        return round(max(1.0, min(5.0, value)) * 10) / 10
+    except (TypeError, ValueError, OverflowError):
+        return 1.0
+
+
+def _xp_percent_factor(raw: Any) -> float:
+    try:
+        return _sanitize_xp_multiplier(float(raw) / 100) if not isinstance(raw, bool) else 1.0
+    except (TypeError, ValueError, OverflowError):
+        return 1.0
+
+
+class ExperienceMultiplierOption(SliderOption):
+    def _from_json(self, value: Any) -> None:
+        # Former releases saved factors (1..5); this control saves percent (100..500).
+        try:
+            raw = float(value)
+            factor = _sanitize_xp_multiplier(value) if raw <= 5 else _xp_percent_factor(value)
+        except (TypeError, ValueError, OverflowError):
+            factor = 1.0
+        super()._from_json(int(round(factor * 100)))
+
+
+XP_OPTIONS = {
+    key: ExperienceMultiplierOption(
+        mode.lower(), 100, 100, 500, step=10, is_integer=True,
+        display_name=mode + " XP (%)",
+        description="Multiply all earned character XP in this mode, including enemies, bosses, missions and discovery. "
+                    "100 = 100% (1.0x); 500 = 500% (5.0x). Other XP modifiers can stack. " + RESTART_NOTE,
+    ) for mode, key in zip(XP_MODES, XP_KEYS)
+}
+_xp_ready = True
+_xp_state: tuple[Any, Any, tuple[int, int, int], int] | None = None
+_xp_announced: set[tuple[int, float]] = set()
+_xp_last_error = ""
+_XP_MODIFIER_NAME = "EQR_AllExperience"
+
+
+def _xp_context(controller: Any = None) -> tuple[Any, Any, tuple[int, int, int], int] | None:
+    pc = get_pc(possibly_loading=True)
+    if (pc is None or (controller is not None and controller != pc)
+            or pc.bDeleteMe or int(pc.Role) != 3):
+        return None
+    world = pc.WorldInfo
+    if world is None or world.bDeleteMe or int(world.NetMode) == 3:
+        return None
+    if str(world.GetStreamingPersistentMapName()).lower() in ("", "loader", "fakeentry", "exampleentry", "menumap"):
+        return None
+    mode = int(pc.GetCurrentPlaythrough())
+    pool = pc.ExpPool.Data
+    if mode not in (0, 1, 2) or pool is None or pool.bIsBeingInitialized:
+        return None
+    return pc, pool, (int(pc._get_address()), int(world._get_address()), int(pool._get_address())), mode
+
+
+def _xp_same_context(identity: tuple[int, int, int], mode: int) -> Any:
+    # Native Add/RemoveModifier can invoke callbacks. Reacquire before further access.
+    if not _xp_ready:
+        return None
+    context = _xp_context()
+    return context[1] if context is not None and context[2:] == (identity, mode) else None
+
+
+def _sync_xp_multiplier(controller: Any = None) -> None:
+    global _xp_state, _xp_last_error
+    settings = _settings()
+    if not _xp_ready or (_xp_state is None and all(settings.get(k, 1.0) == 1.0 for k in XP_KEYS)):
+        return
+    try:
+        context = _xp_context(controller)
+        if context is None:
+            return
+        _, pool, identity, mode = context
+        factor = _sanitize_xp_multiplier(settings.get(XP_KEYS[mode], 1.0))
+        own = None
+        if _xp_state is not None and _xp_state[2] == identity:
+            own = _xp_state[1]()
+        if own is None:
+            stack = tuple(pool.ExpAllPointsScaleModifierStack)
+            own = next((m for m in stack if str(m.Name) == _XP_MODIFIER_NAME), None)
+        attached = own is not None and own in pool.ExpAllPointsScaleModifierStack
+        current = float(pool.ExpAllPointsScale)
+        basis = current - (float(own.Value) if attached else 0.0)
+        if not math.isfinite(basis) or basis < 0:
+            raise ValueError("Invalid native experience scale")
+        expected = basis * (factor - 1.0)
+        if attached and factor != 1.0 and math.isclose(float(own.Value), expected, rel_tol=1e-6, abs_tol=1e-6):
+            return
+        if attached:
+            accepted = pool.RemoveModifier(own, "ExpAllPointsScale", False)
+            pool = _xp_same_context(identity, mode)
+            if pool is None:
+                _xp_state = None
+                return
+            if not accepted or own in pool.ExpAllPointsScaleModifierStack:
+                raise RuntimeError("Could not detach XP modifier")
+        _xp_state = None
+        if factor == 1.0:
+            return
+        basis = float(pool.ExpAllPointsScale)
+        if not math.isfinite(basis) or basis < 0:
+            raise ValueError("Invalid native experience scale")
+        if own is None:
+            # The native stack owns this transient modifier; do not root the pool/world.
+            own = unrealsdk.construct_object("AttributeModifier", pool, _XP_MODIFIER_NAME)
+        if own is None:
+            raise RuntimeError("Could not create XP modifier")
+        own.Type = unrealsdk.find_enum("EModifierType").MT_PostAdd
+        own.Value = basis * (factor - 1.0)
+        _xp_state = (WeakPointer(pool), WeakPointer(own), identity, mode)
+        accepted = pool.AddModifier(own, "ExpAllPointsScale", False)
+        pool = _xp_same_context(identity, mode)
+        if pool is None:
+            _xp_state = None
+            return
+        if (not accepted or own not in pool.ExpAllPointsScaleModifierStack
+                or not math.isclose(float(pool.ExpAllPointsScale), basis * factor, rel_tol=1e-5, abs_tol=1e-5)):
+            # Roll back only our contribution, never XP totals or another mod's stack.
+            _xp_state = None
+            if own in pool.ExpAllPointsScaleModifierStack:
+                pool.RemoveModifier(own, "ExpAllPointsScale", False)
+            raise RuntimeError("Native XP modifier verification failed")
+        notice = (mode, factor)
+        if notice not in _xp_announced:
+            _xp_announced.add(notice)
+            unrealsdk.logging.info(f"[EndgameQoLRebalance] {XP_MODES[mode]} XP pool: multiplier={factor:.1f}x, native={basis:g}, effective={basis * factor:g}")
+    except Exception as exc:
+        message = type(exc).__name__ + ": " + str(exc)
+        if message != _xp_last_error:
+            _xp_last_error = message
+            unrealsdk.logging.error("[EndgameQoLRebalance] Could not configure XP pool: " + message)
+
+
+@hook("WillowGame.WillowPlayerController:SpawningProcessComplete", Type.POST)
+def prepare_experience_scaling(controller: Any, _args: Any, _ret: Any, _func: Any) -> None:
+    global _xp_ready
+    if controller == get_pc(possibly_loading=True):
+        _xp_ready = True
+        _sync_xp_multiplier(controller)
+
+
+@hook("WillowGame.WillowPlayerController:PreClientTravel", Type.PRE)
+@hook("WillowGame.WillowPlayerController:Destroyed", Type.PRE)
+def suspend_experience_scaling(controller: Any, _args: Any, _ret: Any, _func: Any) -> None:
+    global _xp_ready, _xp_state
+    # No actor/pool access during teardown. The pool owns its modifier and may
+    # survive travel; the next spawn resolves it from the native stack.
+    if controller == get_pc(possibly_loading=True):
+        _xp_ready = False
+        _xp_state = None
+
+
 SUPPORT_OPTIONS = [
     LEVEL_CATEGORY,
+    NestedOption("experience_scaling", list(XP_OPTIONS.values()), display_name="Experience Scaling"),
     NestedOption("resources_storage", [backpack_capacity_enabled, bank_capacity_enabled,
                                        ammo_capacity_enabled, ammo_drop_multiplier, eridium_capacity_enabled],
                  display_name="Resources and Storage"),
@@ -481,11 +650,13 @@ SUPPORT_OPTIONS = [
     NestedOption("money_scaling", [money_growth], display_name="Money Scaling"),
     NestedOption("uvhm_rebalance", [uvhm_enabled, uvhm_enemy_health], display_name="UVHM Balance"),
     NestedOption("raid_health", [raid_health_enabled], display_name="Raid Boss Health"),
+    NestedOption("raid_pearls", [raid_pearls_enabled], display_name="Raid Boss Pearlescent Drop"),
     NestedOption("grog_quest", [grog_enabled], display_name="Grog Nozzle Mission Reward"),
     NestedOption("level_difference", [level_resistance_enabled, level_enemy_damage_enabled,
                                       level_status_chance_enabled], display_name="Level Difference Corrections"),
 ]
 _OPTION_VALUES = {
+    **XP_OPTIONS,
     "game_growth_percent": game_growth, "money_growth_percent": money_growth,
     "uvhm_rebalance": uvhm_enabled, "grog_quest": grog_enabled,
     "uvhm_enemy_health_multiplier": uvhm_enemy_health,
@@ -499,9 +670,11 @@ _OPTION_VALUES = {
     "backpack_capacity": backpack_capacity_enabled,
     "eridium_capacity": eridium_capacity_enabled,
     "raid_health": raid_health_enabled,
+    "raid_pearls": raid_pearls_enabled,
 }
 _DEFAULT_SETTINGS: dict[str, Any] = {
-    key: UVHM_HEALTH_DEFAULT if key == "uvhm_enemy_health_multiplier" else
+    key: 1.0 if key in XP_KEYS else
+    UVHM_HEALTH_DEFAULT if key == "uvhm_enemy_health_multiplier" else
     UVHM_AMMO_DROP_DEFAULT if key == "ammo_drop_multiplier" else
     GROWTH_DEFAULT_PERCENT if key.endswith("_percent") else True for key in _OPTION_VALUES
 }
@@ -512,7 +685,9 @@ _session_settings: dict[str, Any] | None = None
 def _read_menu_settings() -> dict[str, Any]:
     values = {}
     for key, option in _OPTION_VALUES.items():
-        if key == "uvhm_enemy_health_multiplier":
+        if key in XP_KEYS:
+            values[key] = _xp_percent_factor(option.value)
+        elif key == "uvhm_enemy_health_multiplier":
             try:
                 value = float(option.value)
                 if isinstance(option.value, bool) or not math.isfinite(value):
@@ -562,6 +737,13 @@ def _freeze_session_settings() -> None:
 GLOBALS_PATH = "GD_Globals.General.Globals"
 UVHM_PATH = "GD_Playthrough3Tuning.Balance.BalanceMod_PT3"
 CHECK_INTERVAL = 2.0
+RULE_SLICE_COUNT = 16
+RULE_SLICE_INTERVAL = CHECK_INTERVAL / RULE_SLICE_COUNT
+_rule_target_slots: dict[str, int] = {}
+_rule_slice: int | None = None
+_rule_next_slice = 0
+_player_rules_next_check = 0.0
+_raid_ratio_checked_until = 0.0
 REPAIR_LOG_INTERVAL = 30.0
 EPSILON = 0.000001
 
@@ -686,6 +868,7 @@ SLAG_GUARD_NAME = "VHS_SlagNPCOnly"
 SLAG_GUARD_CLASS = "GearboxFramework.FlagExpressionEvaluator"
 _slag_guard_owner: tuple[int, int] | None = None
 SLAG_AUDIO_STOP_PATH = "Ake_FX_Global.Ak_Stop_FX_Elemental_Slag_StatusEffect_lp"
+SLAG_AUDIO_PLAY_PATH = "Ake_FX_Global.Ak_Play_FX_Elemental_Slag_StatusEffect_lp"
 _slag_audio_type: int | None = None
 _slag_audio_pending: tuple[int, int, int] | None = None
 _slag_audio_respawn_pending = False
@@ -712,7 +895,10 @@ def _arm_local_slag_audio_cleanup(component: Any, *, enemy_status_ended: bool = 
     world = controller.WorldInfo
     if world is None or world.bDeleteMe:
         return
-    _slag_audio_pending = (controller._get_address(), pawn._get_address(), world._get_address())
+    candidate = (controller._get_address(), pawn._get_address(), world._get_address())
+    if _slag_audio_pending == candidate:
+        return  # Repeated starts must not keep postponing the pending check.
+    _slag_audio_pending = candidate
     _slag_audio_respawn_pending = False
     # Audio startup can precede insertion into ActiveStatusEffects in this call.
     _slag_audio_check_at = time.monotonic() + 0.25
@@ -722,6 +908,33 @@ def _arm_local_slag_audio_cleanup(component: Any, *, enemy_status_ended: bool = 
 def observe_local_slag_sound(component: Any, args: Any, _ret: Any, _func: Any) -> None:
     if _slag_audio_type is not None and int(args.StatusEffectType) == _slag_audio_type:
         _arm_local_slag_audio_cleanup(component)
+
+
+@hook("Engine.Actor:PostAkEvent", Type.PRE)
+@hook("Engine.Actor:Behavior_PostAkEvent", Type.PRE)
+@hook("Engine.Actor:PlayAkEvent", Type.PRE)
+def observe_local_slag_audio_event(actor: Any, args: Any, _ret: Any, _func: Any) -> None:
+    """Catch the controller-owned loop even if no status-component callback fired."""
+    context = _rules_active_context
+    if (_rules_suspended or _slag_audio_type is None or context is None or actor is None
+            or actor._get_address() != context[0]):
+        return  # Reject NPCs and other sound owners before reading event arguments.
+    try:
+        event = (getattr(args, "InAkEvent", None) or getattr(args, "Event", None)
+                 or getattr(args, "InSoundCue", None))
+        if event is None or str(event._path_name()) != SLAG_AUDIO_PLAY_PATH or actor.bDeleteMe:
+            return
+        pawn = actor.Pawn
+        if pawn is None or pawn.bDeleteMe:
+            return
+        component = pawn.GetStatusEffectsComponent()
+        if component is not None:
+            _arm_local_slag_audio_cleanup(component)
+    except (AttributeError, TypeError, ValueError, RuntimeError) as exc:
+        message = str(exc)
+        if _errors.get("Slag audio event observation") != message:
+            _errors["Slag audio event observation"] = message
+            unrealsdk.logging.error("[EndgameQoLRebalance] Could not observe local slag audio event: " + message)
 
 
 @hook("WillowGame.StatusEffectsComponent:OnStatusEffectEnd", Type.POST)
@@ -762,6 +975,53 @@ def arm_slag_audio_after_death(_pawn: Any, _args: Any, ret: Any, _func: Any) -> 
 SLAG_DURATION_SECONDS = 7.0
 SLAG_MOVEMENT_REDUCTION = 0.30
 SLAG_FIRE_RATE_REDUCTION = 0.25
+
+
+def _recover_unobserved_slag_audio(controller: Any) -> None:
+    """Recover a missed start using only the current controller's components."""
+    if (_rules_suspended or _slag_audio_type is None or _slag_audio_pending is not None
+            or _slag_audio_respawn_pending or controller is None
+            or not _settings()["uvhm_rebalance"]):
+        return
+    try:
+        if controller.bDeleteMe:
+            return
+        world, pawn = controller.WorldInfo, controller.Pawn
+        if (world is None or world.bDeleteMe or pawn is None or pawn.bDeleteMe
+                or _rules_active_context != (controller._get_address(), world._get_address())
+                or world.Pauser or controller.IsPauseMenuOpen()):
+            return
+        status = pawn.GetStatusEffectsComponent()
+        if (status is None or status.IsAffectedWithStatusEffectType(_slag_audio_type)
+                or _slag_audio_type in status.GetActiveStatusEffectTypes()):
+            return  # Preserve legitimate native AND replicated slag audio.
+        components = controller.Components
+        if len(components) > 64:
+            return  # Bound the local list; never fall back to a global object scan.
+        try:
+            play = unrealsdk.find_object("AkEvent", SLAG_AUDIO_PLAY_PATH)
+        except ValueError:
+            return  # Do not load an audio bank or create an audio component.
+        if play is None:
+            return
+        for audio in components:
+            if audio is None or audio.Owner != controller:
+                continue
+            playing = getattr(audio, "IsPlayingEvent", None)
+            if playing is not None and playing(play):
+                _arm_local_slag_audio_cleanup(status)
+                if (_slag_audio_pending is not None
+                        and _slag_audio_notice_context != _slag_audio_pending):
+                    unrealsdk.logging.info(
+                        "[EndgameQoLRebalance] Unobserved local slag loop detected without active status; cleanup queued")
+                # Reuse the normal grace period and recheck status before stop.
+                # Store no actor/component reference after this call.
+                return
+    except (AttributeError, TypeError, ValueError, RuntimeError) as exc:
+        message = str(exc)
+        if _errors.get("Unobserved slag audio") != message:
+            _errors["Unobserved slag audio"] = message
+            unrealsdk.logging.error("[EndgameQoLRebalance] Could not inspect local slag audio: " + message)
 
 
 def _finish_local_slag_audio(controller: Any, now: float) -> None:
@@ -1297,6 +1557,11 @@ def _invalidate_target(label: str) -> None:
 
 
 def _check_target(label: str, class_name: str, path: str, configure: Any, now: float) -> None:
+    # Only primitive labels are retained; callbacks/native structs never cross slices.
+    if label not in _rule_target_slots:
+        _rule_target_slots[label] = len(_rule_target_slots) % RULE_SLICE_COUNT
+    if _rule_slice is not None and _rule_target_slots[label] != _rule_slice:
+        return
     try:
         try:
             definition = unrealsdk.find_object(class_name, path)
@@ -1361,9 +1626,51 @@ def _apply_growth_rules(now: float) -> None:
 AMMO_CAPACITY_RULES = (
     ("Sniper", "D_Resourcepools.AmmoPools.Ammo_Sniper_Rifle_Pool", 48.0 * 1.5,
      "GD_BlackMarket.Misc.Att_SniperAmmoPerUpgrade:ConstantAttributeValueResolver_0", 12.0 * 2.0),
-    ("Shotgun", "D_Resourcepools.AmmoPools.Ammo_Combat_Shotgun_Pool", 140.0,
+    ("Shotgun", "D_Resourcepools.AmmoPools.Ammo_Combat_Shotgun_Pool", 150.0,
      "GD_BlackMarket.Misc.Att_ShotgunAmmoPerUpgrade:ConstantAttributeValueResolver_0", 20.0 * 1.5),
 )
+
+
+ROCKET_AMMO_POOL = "D_Resourcepools.AmmoPools.Ammo_Rocket_Launcher_Pool"
+ROCKET_UPGRADE_ATTRIBUTE = "GD_BlackMarket.Attributes.Att_BM_RocketLauncherAmmo"
+ROCKET_RESERVE_CAPACITIES = (21, 24, 27, 30, 34, 38, 43, 48)
+ROCKET_UPGRADE_INIT_NAME = "EQR_RocketUpgradeCapacity"
+
+
+def _rocket_upgrade_fields() -> dict[str, Any]:
+    """Exact integer upgrade totals evaluated in the native owner context, not per frame."""
+    rows = []
+    for count, capacity in enumerate(ROCKET_RESERVE_CAPACITIES[1:], 1):
+        rows.append({
+            "BaseValueIfTrue": _aid(float(capacity - ROCKET_RESERVE_CAPACITIES[0])),
+            "Expressions": [{
+                "AttributeOperand1": ("object", "AttributeDefinition", ROCKET_UPGRADE_ATTRIBUTE),
+                "ComparisonOperator": ("enum", "OPERATOR_GreaterThanOrEqual" if count == 7 else "OPERATOR_EqualTo"),
+                "Operand2Usage": ("enum", "OPERAND_PreferAttribute"),
+                "AttributeOperand2": None, "ConstantOperand2": float(count),
+            }],
+        })
+    return {
+        "BaseValueMode": ("enum", "BASEVALUE_InitializationDefSetsBaseValue"),
+        "RoundingMode": ("enum", "ATTRROUNDING_Float"),
+        "ValueFormula": {"bEnabled": False},
+        "ConditionalInitialization": {"bEnabled": True, "ConditionalExpressionList": rows,
+                                      "DefaultBaseValue": _aid(0.)},
+        "RandomVariance": {"bEnabled": False},
+        "RangeRestriction": {"bEnableMinValueRestriction": False, "bEnableMaxValueRestriction": False},
+    }
+
+
+def _configure_rocket_capacity(pool: Any) -> bool:
+    initializer = _private_definition("AttributeInitializationDefinition", pool, ROCKET_UPGRADE_INIT_NAME)
+    changed = _configure_patch(initializer, _rocket_upgrade_fields())
+    upgrade = _aid(1.)
+    upgrade["InitializationDefinition"] = ("object", "AttributeInitializationDefinition",
+                                           ROCKET_AMMO_POOL + ":" + ROCKET_UPGRADE_INIT_NAME)
+    return _configure_patch(pool, {
+        "BaseMaxValue": _aid(float(ROCKET_RESERVE_CAPACITIES[0])),
+        "MaxValueUpgrade": upgrade,
+    }) or changed
 
 
 def _apply_ammo_capacity(now: float) -> None:
@@ -1378,6 +1685,8 @@ def _apply_ammo_capacity(now: float) -> None:
                       lambda resolver, value=per_upgrade: _configure_patch(resolver, {
                           "ConstantValue": value,
                       }), now)
+    _check_target("Rocket reserve capacity", "ResourcePoolDefinition", ROCKET_AMMO_POOL,
+                  _configure_rocket_capacity, now)
 
 
 ERIDIUM_LIMIT = 1000
@@ -1665,8 +1974,8 @@ _backpack_capacity_busy = False
 def _backpack_capacity_for_upgrades(upgrades: int) -> int:
     if isinstance(upgrades, bool) or not isinstance(upgrades, int) or upgrades < 0:
         raise ValueError("Invalid purchased backpack upgrade count")
-    # The ninth/final native backpack SDU grants +15; intermediate gains stay unchanged.
-    gains = (3, 3, 4, 4, 4, 5, 5, 5, 15)
+    # The final two native backpack SDUs each grant +10; final capacity stays 70.
+    gains = (3, 3, 4, 4, 4, 5, 5, 10, 10)
     result = 22 + sum(gains[:upgrades]) + max(0, upgrades - len(gains)) * 5
     if result > 2147483647:
         raise ValueError("Backpack capacity exceeds the native integer range")
@@ -1873,6 +2182,352 @@ RAID_HEALTH_TARGETS = (
 )
 
 
+RAID_PEARL_CHANCE = .01
+RAID_PEARL_SOURCE = "GD_Gladiolus_Itempools.WeaponPools.Pool_Weapons_All_07_Pearl"
+RAID_PEARL_POOL = RAID_PEARL_SOURCE + ":EQR_RaidPearls"
+RAID_PEARL_SPAWNER = RAID_PEARL_POOL + ".Drop"
+RAID_PEARL_BALANCES = (
+    "GD_Gladiolus_Weapons.Pistol.Pistol_Jakobs_6_Unforgiven",
+    "GD_Gladiolus_Weapons.Pistol.Pistol_Vladof_6_Stalker",
+    "GD_Gladiolus_Weapons.AssaultRifle.AR_Bandit_6_Sawbar",
+    "GD_Gladiolus_Weapons.AssaultRifle.AR_Dahl_6_Bearcat",
+    "GD_Gladiolus_Weapons.SMG.SMG_Tediore_6_Avenger",
+    "GD_Gladiolus_Weapons.Shotgun.SG_Hyperion_6_Butcher",
+    "GD_Gladiolus_Weapons.sniper.Sniper_Maliwan_6_Storm",
+    "GD_Gladiolus_Weapons.Launchers.RL_Torgue_6_Tunguska",
+    "GD_Lobelia_Weapons.AssaultRifles.AR_Jakobs_6_Bekah",
+    "GD_Lobelia_Weapons.Pistol.Pistol_Maliwan_6_Wanderlust",
+    "GD_Lobelia_Weapons.Shotguns.SG_Torgue_6_Carnage",
+    "GD_Lobelia_Weapons.sniper.Sniper_Jakobs_6_Godfinger",
+)
+RAID_PEARL_CLASSES = {
+    "GD_Thresher_Raid.Character.CharClass_Thresher_Raid": "Terramorphous",
+    "GD_BugMorphRaid.Character.CharClass_BugMoprhRaid": "Vermivorous",
+    RAID_HEALTH_CLASSES[0]: "Hyperius", RAID_HEALTH_CLASSES[1]: "Master Gee",
+    RAID_HEALTH_CLASSES[2]: "Voracidous", RAID_HEALTH_CLASSES[3]: "Pyro Pete",
+    RAID_DEX_CLASS: "Dexiduous",
+    "GD_DragonBlue_Raid.Character.CharClass_DragonBlue_Raid": "Healianth",
+    "GD_DragonGreen_Raid.Character.CharClass_DragonGreen_Raid": "Brood",
+    "GD_DragonPurple_Raid.Character.CharClass_DragonPurple_Raid": "Boost",
+    "GD_DragonRed_Raid.Character.CharClass_DragonRed_Raid": "Incinerator",
+    "GD_Anemone_SandWormBoss_1.Character.CharacterClass_Anemone_SandWormBoss_1": "Haderax",
+}
+RAID_PEARL_CRAW_BALANCE = "GD_Crawmerax_Son.Population.PawnBalance_Crawmerax_Son_Raid"
+RAID_PEARL_DRAGONS = frozenset(("Healianth", "Brood", "Boost", "Incinerator"))
+RAID_PEARL_DRAGON_REWARD = "GD_Aster_RaidBossData.IOs.IO_LootSpewer:BehaviorProviderDefinition_0.Behavior_SpawnItems_706"
+_raid_pearl_frames: list[dict[str, Any] | None] = []
+_raid_pearl_dragon_frames: list[dict[str, Any] | None] = []
+_raid_pearl_claimed: dict[tuple[int, int, int], Any] = {}
+_raid_pearl_world: tuple[int, int] | None = None
+_raid_pearl_trace: dict[str, Any] | None = None
+_raid_pearl_prepare_at = 0.0
+_raid_pearl_ready = False
+_raid_pearl_notices: set[str] = set()
+
+
+def _pearl_notice(key: str, message: str) -> None:
+    if key not in _raid_pearl_notices:
+        _raid_pearl_notices.add(key)
+        unrealsdk.logging.info("[EndgameQoLRebalance] Raid pearls: " + message)
+
+
+def _pearl_find(kind: str, path: str) -> Any:
+    try:
+        return unrealsdk.find_object(kind, path)
+    except ValueError:
+        return None
+
+
+def _prepare_raid_pearls() -> Any:
+    """Create only private definitions; never edit a shared source pool or weapon."""
+    global _raid_pearl_ready, _raid_pearl_prepare_at
+    if not _settings()["raid_pearls"]:
+        return None
+    if _raid_pearl_ready:
+        spawner = _pearl_find("Behavior_SpawnItems", RAID_PEARL_SPAWNER)
+        if spawner is not None and _raid_pearl_valid(spawner):
+            return spawner
+        _raid_pearl_ready = False
+        _raid_pearl_prepare_at = 0.
+        _pearl_notice("private-drift", "private pool changed or disappeared; repairing only private definitions")
+    now = time.monotonic()
+    if now < _raid_pearl_prepare_at:
+        return None
+    _raid_pearl_prepare_at = now + 10.
+    source = _pearl_find("ItemPoolDefinition", RAID_PEARL_SOURCE)
+    balances = [_pearl_find("WeaponBalanceDefinition", path) for path in RAID_PEARL_BALANCES]
+    if source is None or any(item is None for item in balances):
+        missing = ([RAID_PEARL_SOURCE] if source is None else []) + [
+            path for path, item in zip(RAID_PEARL_BALANCES, balances) if item is None]
+        _pearl_notice("missing:" + "|".join(missing), "waiting for loaded assets; no partial pool: " + ", ".join(missing))
+        return None
+    pool = _private_definition("ItemPoolDefinition", source, "EQR_RaidPearls")
+    make = unrealsdk.make_struct
+    aid = lambda number: make("AttributeInitializationData", **_aid(number))
+    pool.BalancedItems = [make("BalancedInventoryData", ItmPoolDefinition=None,
+        InvBalanceDefinition=item, Probability=aid(1.), bDropOnDeath=True) for item in balances]
+    pool.Quantity = aid(1.)
+    pool.MinGameStageRequirement = pool.MaxGameStageRequirement = None
+    pool.bAutoReadyItems, pool.bDisablePhysicsDrop = False, False
+    spawner = _pearl_find("Behavior_SpawnItems", RAID_PEARL_SPAWNER)
+    if spawner is None:
+        spawner = unrealsdk.construct_object("Behavior_SpawnItems", pool, "Drop", flags=int(ObjectFlags.KEEP_ALIVE))
+    if spawner is None:
+        raise ValueError("Could not construct private raid pearl spawner")
+    spawner.ItemPoolList = [make("ItemPoolInfo", ItemPool=pool, PoolProbability=aid(RAID_PEARL_CHANCE))]
+    spawner.ItemPoolIncludedLists = []
+    spawner.bDisablePickups, spawner.bSavePickup = False, True
+    spawner.ItemDropOffset = make("Vector", X=0., Y=0., Z=80.)
+    spawner.ItemDropVelocity = make("Vector", X=0., Y=0., Z=120.)
+    if not _raid_pearl_valid(spawner):
+        raise ValueError("Private raid pearl definitions failed native verification")
+    _raid_pearl_ready = True
+    _pearl_notice("prepared", f"private pool ready; items=12, equal weights, quantity=1, chance={RAID_PEARL_CHANCE:.0%}; original definitions untouched")
+    return spawner
+
+
+def _raid_pearl_valid(spawner: Any) -> bool:
+    def constant(value: Any, expected: float) -> bool:
+        return (math.isclose(float(value.BaseValueConstant), expected, rel_tol=1e-6, abs_tol=1e-8)
+                and float(value.BaseValueScaleConstant) == 1.
+                and value.BaseValueAttribute is None and value.InitializationDefinition is None)
+    rows = tuple(spawner.ItemPoolList)
+    if len(rows) != 1 or spawner.ItemPoolIncludedLists or not constant(rows[0].PoolProbability, RAID_PEARL_CHANCE):
+        return False
+    pool = rows[0].ItemPool
+    return (pool is not None and str(pool._path_name()) == RAID_PEARL_POOL
+            and constant(pool.Quantity, 1.) and pool.MinGameStageRequirement is None
+            and pool.MaxGameStageRequirement is None and len(pool.BalancedItems) == 12
+            and all(row.InvBalanceDefinition is not None for row in pool.BalancedItems)
+            and tuple(str(row.InvBalanceDefinition._path_name()) for row in pool.BalancedItems) == RAID_PEARL_BALANCES
+            and all(row.ItmPoolDefinition is None and constant(row.Probability, 1.) for row in pool.BalancedItems))
+
+
+@hook("WillowGame.WillowPlayerController:SpawningProcessComplete", Type.POST)
+def prepare_raid_pearl_assets(controller: Any, _args: Any, _ret: Any, _func: Any) -> None:
+    if not _settings()["raid_pearls"]:
+        return
+    try:
+        if controller == get_pc(possibly_loading=True) and int(controller.Role) == 3:
+            _prepare_raid_pearls()
+    except (AttributeError, TypeError, ValueError, RuntimeError) as exc:
+        _pearl_notice("prepare-error", "could not prepare private pool: " + str(exc))
+
+
+def _raid_pearl_name(pawn: Any) -> str | None:
+    kind = getattr(pawn, "AIClass", None)
+    name = RAID_PEARL_CLASSES.get(str(kind._path_name())) if kind is not None else None
+    if name is None:
+        state = getattr(pawn, "BalanceDefinitionState", None)
+        balance = state.BalanceDefinition if state is not None else None
+        if balance is not None and str(balance._path_name()) == RAID_PEARL_CRAW_BALANCE:
+            name = "Invincible Son of Crawmerax"
+    return name
+
+
+@hook("WillowGame.WillowAIPawn:Died", Type.PRE)
+@hook("WillowGame.WillowPawn:Died", Type.PRE)
+def begin_raid_pearl_death(pawn: Any, args: Any, _ret: Any, _func: Any) -> None:
+    global _raid_pearl_world
+    _raid_pearl_frames.append(None)
+    if not _settings()["raid_pearls"] or len(_raid_pearl_frames) > 32:
+        return
+    try:
+        if pawn is None or pawn.bDeleteMe:
+            return
+        name = _raid_pearl_name(pawn)
+        if name is None or name in RAID_PEARL_DRAGONS:
+            return
+        pc = get_pc(possibly_loading=True)
+        world = pawn.WorldInfo
+        if (pc is None or pc.bDeleteMe or int(pc.Role) != 3 or world is None
+                or world.bDeleteMe or pc.WorldInfo != world or int(world.NetMode) == 3):
+            return
+        context = (int(pc._get_address()), int(world._get_address()))
+        if context == _rules_departing_context:
+            return
+        if context != _raid_pearl_world:
+            _raid_pearl_claimed.clear()
+            _raid_pearl_world = context
+        key = (*context, int(pawn._get_address()))
+        if key in _raid_pearl_claimed and _raid_pearl_claimed[key]() == pawn:
+            return
+        parent = _raid_pearl_frames[-2] if len(_raid_pearl_frames) > 1 else None
+        if parent is not None and parent["key"] == key:
+            _raid_pearl_frames[-1] = parent
+        else:
+            _raid_pearl_frames[-1] = dict(key=key, pawn=WeakPointer(pawn), pc=WeakPointer(pc),
+                world=WeakPointer(world), name=name)
+            unrealsdk.logging.info(f"[EndgameQoLRebalance] Raid pearls: death observed; boss={name}; context={key}; waiting for native death result")
+    except (AttributeError, TypeError, ValueError, RuntimeError) as exc:
+        _pearl_notice("death-error", "could not capture raid death: " + str(exc))
+
+
+def _pearl_live(frame: dict[str, Any]) -> tuple[Any, Any] | None:
+    pawn, pc, world = frame["pawn"](), frame["pc"](), frame["world"]()
+    if (pawn is None or pc is None or world is None or pawn.bDeleteMe or pc.bDeleteMe
+            or world.bDeleteMe or pawn.WorldInfo != world or pc.WorldInfo != world
+            or pc != get_pc(possibly_loading=True) or int(pc.Role) != 3
+            or frame["key"][:2] == _rules_departing_context
+            or (int(pc._get_address()), int(world._get_address()), int(pawn._get_address())) != frame["key"]):
+        return None
+    return pawn, pc
+
+
+def _pearl_original_rows(pawn: Any) -> tuple[Any, ...]:
+    return tuple((str(row.ItemPool._path_name()) if row.ItemPool is not None else None,
+        float(row.PoolProbability.BaseValueConstant), float(row.PoolProbability.BaseValueScaleConstant),
+        str(row.PoolProbability.BaseValueAttribute), str(row.PoolProbability.InitializationDefinition))
+        for row in getattr(pawn, "ItemPoolList", ()))
+
+
+@hook("WillowGame.WillowAIPawn:Died", Type.POST_UNCONDITIONAL)
+@hook("WillowGame.WillowPawn:Died", Type.POST_UNCONDITIONAL)
+def finish_raid_pearl_death(_pawn: Any, _args: Any, result: Any, _func: Any) -> None:
+    if not _raid_pearl_frames:
+        return
+    frame = _raid_pearl_frames.pop()
+    if frame is None or any(item is frame for item in _raid_pearl_frames):
+        return
+    if result is not True:
+        _pearl_notice("cancelled:" + frame["name"], "native death cancelled for " + frame["name"])
+        return
+    _run_raid_pearl_drop(frame)
+
+
+def _run_raid_pearl_drop(frame: dict[str, Any]) -> None:
+    global _raid_pearl_trace
+    try:
+        live = _pearl_live(frame)
+        if live is None:
+            _pearl_notice("skipped:" + frame["name"], "additional roll skipped for " + frame["name"] + "; death cancelled or context no longer valid")
+            return
+        pawn, pc = live
+        health = 0. if frame.get("encounter_reward") else float(pawn.GetHealth())
+        claimed = _raid_pearl_claimed.get(frame["key"])
+        if not math.isfinite(health) or health > 0. or (claimed is not None and claimed() == pawn):
+            return
+        if len(_raid_pearl_claimed) >= 256:
+            for key in tuple(_raid_pearl_claimed):
+                if _raid_pearl_claimed[key]() is None:
+                    _raid_pearl_claimed.pop(key, None)
+            if len(_raid_pearl_claimed) >= 256:
+                _pearl_notice("capacity", "deduplication capacity reached; preserving original loot only")
+                return
+        spawner = _prepare_raid_pearls()
+        if spawner is None:
+            return
+        # Only private definitions are modified. Re-read after potential preparation callbacks.
+        live = _pearl_live(frame)
+        if live is None:
+            return
+        pawn, pc = live
+        original = _pearl_original_rows(pawn)
+        _raid_pearl_claimed[frame["key"]] = WeakPointer(pawn)  # Claim before callbacks; never replay a partial drop.
+        spawner.ExpLevel = max(1, int(frame["stage"] if frame.get("encounter_reward") else pawn.GetGameStage()))
+        trace = dict(name=frame["name"], generated={}, pickups={})
+        previous, _raid_pearl_trace = _raid_pearl_trace, trace
+        entered = False
+        try:
+            _level_begin_generated_scope(None, None, None, None)
+            entered = True
+            # Reflected parameter order need not match the legacy C++ header order.
+            # Bind by native names so UObject contexts never occupy struct parameters.
+            spawner.ApplyBehaviorToContext(
+                ContextObject=pawn, SelfObject=pawn, MyInstigatorObject=pc,
+                OtherEventParticipantObject=None,
+                EventData=unrealsdk.make_struct("BehaviorParameters"),
+                KernelInfo=unrealsdk.make_struct("BehaviorKernelInfo"),
+            )
+        finally:
+            try:
+                if entered:
+                    _level_end_generated_scope(None, None, None, None)
+            finally:
+                _raid_pearl_trace = previous
+        live = _pearl_live(frame)
+        unchanged = _pearl_original_rows(live[0]) == original if live is not None else "unverified-context-changed"
+        unrealsdk.logging.info(f"[EndgameQoLRebalance] Raid pearls: boss={frame['name']}; chance={RAID_PEARL_CHANCE:.0%}; quantity=1; generated={list(trace['generated'].values())}; pickups={list(trace['pickups'].values())}; actor_original_pools_unchanged={unchanged}; observed_only_during_private_roll=True")
+        if (len(trace["pickups"]) > 1 or any(path not in RAID_PEARL_BALANCES
+                for path, _stage in trace["generated"].values())):
+            _pearl_notice("unexpected:" + frame["name"], "unexpected item/count observed during private roll for " + frame["name"] + "; inspect other loot hooks")
+    except (AttributeError, TypeError, ValueError, RuntimeError) as exc:
+        _pearl_notice("spawn-error:" + frame["name"], "additional roll failed for " + frame["name"] + ": " + str(exc) + "; no automatic retry")
+
+
+@hook("WillowGame.Behavior_SpawnItems:ApplyBehaviorToContext", Type.PRE)
+def begin_raid_pearl_dragons(behavior: Any, args: Any, _ret: Any, _func: Any) -> None:
+    global _raid_pearl_world
+    if not _settings()["raid_pearls"] or str(behavior._path_name()) != RAID_PEARL_DRAGON_REWARD:
+        return
+    _raid_pearl_dragon_frames.append(None)
+    try:
+        actor = args.SelfObject
+        if actor is None or not hasattr(actor, "WorldInfo"):
+            actor = args.ContextObject
+        pc = get_pc(possibly_loading=True)
+        if actor is None or actor.bDeleteMe or pc is None or pc.bDeleteMe or int(pc.Role) != 3:
+            return
+        world = actor.WorldInfo
+        if world is None or world.bDeleteMe or world != pc.WorldInfo or int(world.NetMode) == 3:
+            return
+        level = _level_context(pc)
+        if level is None:
+            return
+        context = (int(pc._get_address()), int(world._get_address()))
+        if context == _rules_departing_context:
+            return
+        if context != _raid_pearl_world:
+            _raid_pearl_claimed.clear()
+            _raid_pearl_world = context
+        _raid_pearl_dragon_frames[-1] = dict(key=(*context,int(actor._get_address())), pawn=WeakPointer(actor),
+            pc=WeakPointer(pc),world=WeakPointer(world),name="Ancient Dragons",encounter_reward=True,stage=level[1])
+    except (AttributeError, TypeError, ValueError, RuntimeError) as exc:
+        _pearl_notice("dragons-error", "could not capture Ancient Dragons encounter reward: " + str(exc))
+
+
+@hook("WillowGame.Behavior_SpawnItems:ApplyBehaviorToContext", Type.POST_UNCONDITIONAL)
+def finish_raid_pearl_dragons(behavior: Any, _args: Any, _ret: Any, _func: Any) -> None:
+    if str(behavior._path_name()) != RAID_PEARL_DRAGON_REWARD or not _raid_pearl_dragon_frames:
+        return
+    frame = _raid_pearl_dragon_frames.pop()
+    if frame is not None:
+        _run_raid_pearl_drop(frame)
+
+
+@hook("WillowGame.WillowWeapon:InitializeFromDefinitionData", Type.POST_UNCONDITIONAL)
+def observe_raid_pearl_weapon(weapon: Any, args: Any, _ret: Any, _func: Any) -> None:
+    trace = _raid_pearl_trace
+    if trace is None:
+        return
+    try:
+        if weapon is None or getattr(weapon, "bDeleteMe", False):
+            return
+        # The level-cap PRE hook can replay initialization and block the original.
+        # Read the resulting weapon data, not the pre-cap argument or a skipped POST.
+        data = getattr(weapon, "DefinitionData", None)
+        if data is None:
+            data = args.NewDefinitionData
+        balance = data.BalanceDefinition
+        path = str(balance._path_name()) if balance is not None else ""
+        trace["generated"][int(weapon._get_address())] = (path, int(data.GameStage))
+    except (AttributeError, TypeError, ValueError, RuntimeError) as exc:
+        _pearl_notice("weapon-trace-error", "could not observe generated pearl: " + str(exc))
+
+
+@hook("WillowGame.WillowPickup:InitializeFromInventory", Type.POST)
+def observe_raid_pearl_pickup(pickup: Any, args: Any, _ret: Any, _func: Any) -> None:
+    trace = _raid_pearl_trace
+    if trace is None:
+        return
+    try:
+        item = args.InInv
+        if item is not None and int(item._get_address()) in trace["generated"]:
+            trace["pickups"][int(pickup._get_address())] = trace["generated"][int(item._get_address())]
+    except (AttributeError, TypeError, ValueError, RuntimeError) as exc:
+        _pearl_notice("pickup-trace-error", "could not observe pearl pickup: " + str(exc))
+
+
 def _raid_aid_fields(value: Any) -> dict[str, Any]:
     return {key: getattr(value, key) for key in (
         "BaseValueConstant", "BaseValueAttribute", "InitializationDefinition", "BaseValueScaleConstant",
@@ -1898,6 +2553,16 @@ def _raid_weight_reference(definition: Any) -> dict[str, Any]:
 
 def _prepare_raid_health_ratio() -> Any:
     """F(actual players)/F(effective players), retaining native mode/champion weights."""
+    global _raid_ratio_checked_until
+    now = time.monotonic()
+    if _rule_slice is not None and now < _raid_ratio_checked_until:
+        try:
+            cached = unrealsdk.find_object("AttributeInitializationDefinition",
+                RAID_PLAYER_WEIGHT_PATH + ":VHS_RaidHealthPlayerRatio")
+        except ValueError:
+            cached = None
+        if cached is not None:
+            return cached  # Rooted static definition, resolved afresh; no retained UObject.
     def required(cls: str, path: str) -> Any:
         try:
             obj = unrealsdk.find_object(cls, path)
@@ -1955,6 +2620,7 @@ def _prepare_raid_health_ratio() -> Any:
         "RangeRestriction": {"bEnableMinValueRestriction": True, "MinValue": _aid(0.0),
                              "bEnableMaxValueRestriction": True, "MaxValue": _aid(1.0)},
     })  # Remove inflation only; never amplify HP if the effective counter lags.
+    _raid_ratio_checked_until = now + CHECK_INTERVAL
     return ratio
 
 
@@ -2049,12 +2715,18 @@ def _apply_raid_health_rules(now: float) -> None:
 
 
 def _apply_rules(*, force: bool = False, controller: Any = None) -> None:
-    global _next_check, _applying
+    global _next_check, _applying, _rule_slice, _rule_next_slice, _player_rules_next_check
     now = time.monotonic()
     if _applying or (not force and now < _next_check):
         return
-    _next_check = now + CHECK_INTERVAL
+    _next_check = now + RULE_SLICE_INTERVAL
     _applying = True
+    _rule_slice = None if force else _rule_next_slice
+    if not force:
+        _rule_next_slice = (_rule_next_slice + 1) % RULE_SLICE_COUNT
+    player_due = force or now >= _player_rules_next_check
+    if player_due:
+        _player_rules_next_check = now + CHECK_INTERVAL
     try:
         # Look up definitions afresh; never retain actors, worlds or UObjects.
         if any(_settings()[key] for key in LEVEL_DIFFERENCE_KEYS):
@@ -2062,7 +2734,7 @@ def _apply_rules(*, force: bool = False, controller: Any = None) -> None:
         _apply_growth_rules(now)
         _apply_ammo_capacity(now)
         _apply_raid_health_rules(now)
-        if controller is not None:
+        if player_due and controller is not None:
             _refresh_bank_capacity(controller)
             _refresh_backpack_capacity(controller)
         _check_grog_reward(now)
@@ -2070,9 +2742,13 @@ def _apply_rules(*, force: bool = False, controller: Any = None) -> None:
             _apply_full_rebalance(now, force=force)
         if _settings()["higher_level_damage"] or _settings()["higher_level_status_chance"]:
             _check_target("UVHM tables", "BalanceModifierDefinition", UVHM_PATH, _configure_uvhm_level_policy, now)
-        _observe_player_movement(controller, now)
-        _finish_local_slag_audio(controller, now)
+        if player_due:
+            _observe_player_movement(controller, now)
+            _recover_unobserved_slag_audio(controller)
+            _finish_local_slag_audio(controller, now)
+            _sync_xp_multiplier(controller)
     finally:
+        _rule_slice = None
         _applying = False
 
 
@@ -2518,6 +3194,10 @@ def suspend_rules_for_departing_player(controller: Any, _args: Any, _ret: Any, _
 
 def on_enable() -> None:
     global _next_check, _uvhm_signature, _uvhm_audit_cursor
+    global _rule_slice, _rule_next_slice, _player_rules_next_check, _raid_ratio_checked_until
+    _rule_slice, _rule_next_slice = None, 0
+    _player_rules_next_check = _raid_ratio_checked_until = 0.
+    _rule_target_slots.clear()
     global _movement_snapshot, _movement_notice_at
     global _rules_suspended, _rules_active_context, _rules_departing_context
     global _slag_audio_type, _slag_audio_pending, _slag_audio_respawn_pending
@@ -2540,7 +3220,7 @@ def on_enable() -> None:
     _last_repair_notice.clear()
     _storage_status_messages.clear()
     unrealsdk.logging.info(
-        "[EndgameQoLRebalance] Loaded 1.0.9: configurable endgame balance, level differences, "
+        "[EndgameQoLRebalance] Loaded 1.0.17: independent 1% raid pearl roll, per-mode XP, configurable endgame balance, level differences, "
         "storage, ammo, Eridium and loot markers; restart-applied settings; "
         + json.dumps(_settings(), sort_keys=True)
     )
@@ -2631,10 +3311,14 @@ mod = build_mod(
     cls=EndgameQoLRebalanceMod,
     auto_enable=True,
     on_enable=on_enable,
-    hooks=[refresh_frontend, prepare_game, refresh_game, prepare_class,
+    hooks=[prepare_raid_pearl_assets, begin_raid_pearl_death, finish_raid_pearl_death,
+           begin_raid_pearl_dragons, finish_raid_pearl_dragons,
+           observe_raid_pearl_weapon, observe_raid_pearl_pickup,
+           prepare_experience_scaling, suspend_experience_scaling,
+           refresh_frontend, prepare_game, refresh_game, prepare_class,
            maintain_rules, suspend_rules_for_departing_player,
            observe_local_slag_sound, observe_local_slag_end,
-           prepare_slag_audio_after_death, arm_slag_audio_after_death,
+           prepare_slag_audio_after_death, arm_slag_audio_after_death, observe_local_slag_audio_event,
            prepare_grog_accept, prepare_grog_completion,
            *LEVEL_HOOKS, release_loot_stars,
            prepare_personal_bank_capacity, preserve_personal_bank_capacity, preserve_backpack_capacity],

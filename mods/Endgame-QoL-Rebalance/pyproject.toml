@@ -1,15 +1,16 @@
 [project]
 name = "EndgameQoLRebalance"
-version = "1.0.9"
+version = "1.0.17"
 authors = [{ name = "Kgx37b9" }]
 description = """\
-EndgameQoLRebalance 1.0.9<br>\
+EndgameQoLRebalance 1.0.17<br>\
 Author: Kgx37b9<br><br>\
 Configure enemy and loot levels, UVHM balance, raid-boss health, game and money growth, \
-loot markers and the Grog Nozzle mission reward.<br><br>\
+loot markers and the Grog Nozzle mission reward. Separate NVHM, TVHM and UVHM XP sliders control earned experience from 100% to 500% in steps of 10% (default 100%), including kills, bosses, quests and discovery.<br><br>\
+Raid Boss Pearlescent Drop adds a separate 1% roll from all 12 Pearlescent weapons, one item per qualifying raid kill or completed Ancient Dragons encounter. Includes temporary generation/pickup diagnostics and preserves original loot tables.<br><br>\
 Level Difference Corrections has independent switches for higher-level enemy resistance, \
 enemy damage and elemental status chance. Resources and Storage contains separate \
-backpack, personal-bank, ammo-capacity and Eridium-capacity switches, plus a UVHM ammo-drop slider (1x-5x, default 2x). Eridium 1000 requires a \
+backpack, personal-bank, ammo-capacity and Eridium-capacity switches (rocket reserve: 21 base, 48 at seven SDUs), plus a UVHM ammo-drop slider (1x-5x, default 2x). Eridium 1000 requires a \
 compatible Windows BL2 executable; an unsupported build is left unchanged.<br><br>\
 Changes to options apply after a complete game restart. Co-op has not been validated. \
 Personal gameplay use is permitted; prior written permission is required to reuse any original code. See LICENSE.md and README.md for features, compatibility, credits and installation.
@@ -17,7 +18,7 @@ Personal gameplay use is permitted; prior written permission is required to reus
 
 [tool.sdkmod]
 name = "EndgameQoLRebalance"
-version = "1.0.9"
+version = "1.0.17"
 supported_games = ["BL2"]
 coop_support = "Unknown"
 auto_enable = true

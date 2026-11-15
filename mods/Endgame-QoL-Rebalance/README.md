@@ -1,26 +1,32 @@
-# EndgameQoLRebalance 1.0.9
+# EndgameQoLRebalance 1.0.17
 
-Configurable endgame balance and quality-of-life settings for **Borderlands 2**. Version **1.0.9** by **Kgx37b9**.
+Configurable endgame balance and quality-of-life settings for **Borderlands 2**. Version **1.0.17** by **Kgx37b9**.
 
 The mod offers level rules for enemies, loot, missions and vendors; growth sliders; UVHM and raid-boss balance; a Grog Nozzle quest reward; gold minimap stars for rare loot; and resource-capacity adjustments. Settings take effect after a full game restart. The installable runtime uses one Python file.
 
 ## Features and options
 
+Periodic definition checks are distributed across small maintenance slices instead of being executed together in one frame. Each target remains checked once per cycle; startup and explicit mission events still apply their changes immediately. Bank/backpack checks and slag-audio recovery retain their existing two-second interval. This reduces concentrated maintenance work; gameplay frame-time improvement still needs confirmation after updating.
+
+With UVHM Rebalance enabled, targeted local slag-audio cleanup preserves legitimate active slag and handles a controller-owned loop that can remain after its status ends. Version 1.0.13 also checks the current local controller's registered components within the existing two-second maintenance, so recovery no longer depends on receiving a start/end callback. It stops only the confirmed slag loop after native and replicated slag are absent, preserves a short grace period, and does not scan the game audio registry or create a new tick hook. Automatic recovery still needs validation after installation.
+
 | Menu category | Controls | Default |
 | --- | --- | --- |
 | Level Scaling | Enemy/loot minimum and maximum, mission minimum, on-level vendors, new-item level-80 cap | See [Level Scaling](#level-scaling) |
+| Experience Scaling | Independent NVHM, TVHM and UVHM earned-XP sliders: 100%-500%, step 10% | 100% for each mode |
 | Resources and Storage | Independent backpack, personal bank, sniper/shotgun ammo and 1000-Eridium-cap switches; UVHM ammo-pack drop slider (1x-5x) | Switches on; drops 2x |
 | Rare Loot Minimap Stars | Gold markers for Legendary, Pearlescent, Seraph and Effervescent drops | On |
 | Game Scaling | Global health/damage growth: 1%-20% per level | 5% |
 | Money Scaling | Money/price growth: 1%-20% per level | 5% |
 | UVHM Balance | Enemy health and shields, passive regeneration, loot, vehicle damage, ammo drops and slag | On; health/shields 2x |
 | Raid Boss Health | Party-size health adjustment, Master Gee/Dexiduous multipliers and Voracidous' UVHM shield | On |
+| Raid Boss Pearlescent Drop | Independent extra roll from all 12 Pearlescent weapons, one item | On; **1% chance** |
 | Grog Nozzle Mission Reward | Add the Grog Nozzle to the existing quest rewards | On |
 | Level Difference Corrections | Separate switches for higher-level enemy resistance, higher-level enemy damage and elemental status chance | All on |
 
 The three level-difference switches affect only penalties caused by level difference. They do not remove intrinsic immunities or elemental resistances. The Resources and Storage switches are independent of UVHM Balance. The Eridium switch changes the limit to 1000 in memory on compatible Windows BL2 builds; it does not modify the executable file. If the build cannot be verified, the native limit remains in place and the mod logs a warning. This new switch needs in-game validation.
 
-The backpack begins at **22 slots** and its purchased SDUs add **3, 3, 4, 4, 4, 5, 5, 5 and 15**. The personal bank begins at **25 slots** and its SDUs add **5, 5, 10, 15 and 20 for each further upgrade**. Sniper ammo capacity is **72 + 24 per SDU**; shotgun capacity is **140 + 30 per SDU**. Backpack and bank changes preserve existing upgrades and apply to supported local solo sessions. Ammo capacity applies in every playthrough. The four-slot shared stash is unchanged.
+The backpack begins at **22 slots** and its purchased SDUs add **3, 3, 4, 4, 4, 5, 5, 10 and 10**. The personal bank begins at **25 slots** and its SDUs add **5, 5, 10, 15 and 20 for each further upgrade**. Sniper ammo capacity is **72 + 24 per SDU**; shotgun capacity is **150 + 30 per SDU**. Backpack and bank changes preserve existing upgrades and apply to supported local solo sessions. Ammo capacity applies in every playthrough. The four-slot shared stash is unchanged.
 
 The UVHM health and shield slider ranges from **1x to 4x** in steps of **0.25x**. Badass enemies retain the native health proportion: regular enemies at 2x correspond to badass enemies at 1.3x. Boss phases and scripted healing remain. Player vehicle weapon damage is 3x. Ammo-pack drops use the Resources and Storage slider (1x-5x, default 2x); 1x leaves native drops unchanged. This slider applies only while UVHM Balance is enabled. Passive enemy UVHM regeneration is removed. Slag lasts seven seconds, slows NPC movement by 30% and weapon fire rate by 25%, and does not amplify damage. The slag slow does not affect players. Melee and special-attack speed are unchanged.
 
@@ -38,6 +44,26 @@ The values below are relative weights, not direct drop percentages.
 | 50-60 | 0.10 | 0.15 |
 | 61-70 | 0.02 | 0.0625 |
 | 71 and above, including OP levels | 0.02 | 0.025 |
+
+## Experience Scaling
+
+Three independent integer sliders control earned character XP in **NVHM**, **TVHM** and **UVHM**, from **100% (1.0x) to 500% (5.0x)** in steps of **10% (0.1x)**. The native mod menu cannot represent fractional sliders reliably; percentage values keep the slider bar without extra decimal places. Existing factor settings (for example, 2.0x) migrate automatically to percentages (200%). Each defaults to **100%** and takes effect after a complete restart, like the other options. These settings are independent of UVHM Balance.
+
+The multiplier is attached to the player's native all-experience scale, covering combat, missions and generic character-XP sources. This replaces the XP-grant hook from 1.0.14, which did not increase XP in the reported gameplay test. Native rounding, XP thresholds, level caps, money and equipment rewards remain unchanged. Mission reward formulas are not rewritten; quest previews may still show their base reward rather than the multiplied amount actually granted. Pool configuration is verified after spawning and through the existing maintenance interval; stable settings are not reapplied on every award.
+
+Other XP modifiers are cumulative. **Disable Exp Adjuster (and restart to clear its changes), or restore its XP settings to neutral**, if these sliders should be the only XP adjustment. For example, an existing 2x bonus combined with this mod's 3x setting can produce 6x the original reward. This implementation targets the local authority player; remote co-op XP has not been implemented or validated. Confirmation of actual combat and mission XP after installing 1.0.15 is still pending; a successful pool log alone does not validate every reward source.
+
+## Raid Boss Pearlescent Drop
+
+The independent toggle adds one extra roll on a successful raid-boss death: Terramorphous, Vermivorous, Hyperius, Master Gee, Pyro Pete, Voracidous, Dexiduous, Haderax and the raid variant of the Invincible Son of Crawmerax. The Ancient Dragons receive **one roll for the completed encounter**, through their native unique-loot reward behavior; individual dragon deaths do not award extra rolls.
+
+**The additional pool has a 1% chance per qualifying kill or completed encounter.** The private pool has quantity 1 and equal weights for the eight original pearls (Unforgiven, Stalker, Sawbar, Bearcat, Avenger, Butcher, Storm, Tunguska) and four additional pearls (Bekah, Wanderlust, Carnage, Godfinger). All 12 weapon definitions must be available before this pool is prepared; missing assets are logged and the extra roll is skipped instead of silently using a smaller selection. Native item/DLC restrictions remain in effect.
+
+The extra roll runs after the native death or encounter-reward callback, when map hotfixes are already loaded. It uses private pool/spawn definitions and does not replace, append to or rewrite the original loot tables, shared drop-rate attributes or their quantities. Existing Better Loot/UCP drops remain independent, so the total loot may contain other pearls in addition to our one-item roll. This feature is independent of Raid Boss Health and UVHM Balance. Local authority only; remote co-op remains unvalidated.
+
+Temporary `Raid pearls:` logs report asset readiness, chance/quantity, eligible deaths, generated weapon balances and observed pickups during the private roll, duplicate protection, unexpected items/counts and whether the actor's original pool rows remained unchanged. A generation log is not proof of a physical pickup. Empty rolls are normal at 1% and do not generate failure warnings; no failed or partial roll is automatically replayed. The existing item-level rules and level-80 cap are applied to this new generation scope.
+
+A Pearlescent drop was confirmed in gameplay during the 100% test; the author then approved the final 1% chance. Restart after updating. Coverage of every boss route, the toggle-off case, repeated encounters and remote co-op still needs validation. No extra polling timer or per-frame actor scan is used.
 
 ## Raid Boss Health
 
@@ -96,7 +122,7 @@ Confirm in a fresh encounter after a complete restart: solo HP versus the same b
 
 ## Backpack Capacity
 
-The backpack starts with **22 slots**. Purchased backpack SDUs add **3, 3, 4, 4 and 4 slots** for the first five upgrades. The sixth through eighth SDUs add **5 slots each**; the ninth/final native SDU adds **15 slots**, reaching **70 slots**.
+The backpack starts with **22 slots**. Purchased backpack SDUs add **3, 3, 4, 4 and 4 slots** for the first five upgrades. The sixth and seventh SDUs add **5 slots each**; the eighth and ninth SDUs add **10 slots each**, reaching **70 slots**.
 
 | Purchased backpack SDUs | Capacity |
 | --- | --- |
@@ -108,7 +134,7 @@ The backpack starts with **22 slots**. Purchased backpack SDUs add **3, 3, 4, 4 
 | 5 | 40 |
 | 6 | 45 |
 | 7 | 50 |
-| 8 | 55 |
+| 8 | 60 |
 | 9 | 70 |
 
 Existing purchased SDUs contribute automatically. Prices and the number of purchasable SDUs remain native. Larger existing capacity and occupied inventory are preserved. This option applies to the owning local character in solo play, independently of Personal Bank Capacity, and requires a full restart after changing its setting. It changes capacity limits only; equipment and SDU purchase records are not rebuilt. Solo capacity behavior was confirmed by the author; co-op remains untested.
@@ -141,9 +167,10 @@ This option applies in every playthrough, independently of UVHM Balance.
 | Ammo type | Native base | New base | Native gain per SDU | New gain per SDU |
 | --- | --- | --- | --- | --- |
 | Sniper | 48 | 72 (+50%) | 12 | 24 (+100%) |
-| Shotgun | 80 | 140 (+75%) | 20 | 30 (+50%) |
+| Shotgun | 80 | 150 (+87.5%) | 20 | 30 (+50%) |
+| Rocket launcher | 12 | 21 | 3 | +3, +3, +3, +4, +4, +5, +5 |
 
-Reserve capacity is the base plus the number of purchased upgrades multiplied by the gain per SDU. The two increases are independent; they do not multiply the previous upgrade's total. Existing upgrades contribute through the game's own upgrade-count attribute. This option does not change magazine sizes, upgrade counts, SDU prices or other ammunition types. Restart after changing the toggle or installing the build. Check the reserve capacity after loading the character; buying a new SDU is not required to benefit from previously purchased upgrades.
+For sniper and shotgun, reserve capacity is the base plus the number of purchased upgrades multiplied by the gain per SDU. The two increases are independent; they do not multiply the previous upgrade's total. Existing upgrades contribute through the game's own upgrade-count attribute. Rocket reserve capacity uses an exact native conditional table based on purchased upgrades: **21, 24, 27, 30, 34, 38, 43, 48** for zero through seven SDUs. Upgrades four and five add 4 each, and upgrades six and seven add 5 each. This option does not change magazine sizes, upgrade counts, SDU prices or other ammunition types. Restart after changing the toggle or installing the build. Check the reserve capacity after loading the character; buying a new SDU is not required to benefit from previously purchased upgrades.
 
 ## Level Scaling
 
