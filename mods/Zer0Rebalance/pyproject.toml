@@ -1,0 +1,23 @@
+[project]
+name = "Zer0Rebalance"
+version = "1.0.7"
+authors = [{ name = "Kgx37b9" }]
+
+description = """\
+Zer0 Rebalance 1.0.7<br>\
+Author: Kgx37b9<br><br>\
+A standalone Zer0 skill rebalance with new offensive and defensive effects, broader weapon support and updated stack mechanics.<br><br>\
+Highlights: movement and damage stacks in Be Like Water; critical ricochets in Precision; empowered shots in At One with the Gun; all-weapon Critical Ascensi0n; expanded decoy effects in Unf0reseen; and revised healing, resistance and cooldown bonuses.<br><br>\
+Supports effective class-mod ranks and skill HUD counters, including a 1-10 charge indicator for At One with the Gun. See README.md for the complete skill list.<br><br>\
+Requires Borderlands 2 and the modern Python SDK Mod Manager. Other rebalance modules are optional. Disable overlapping Zer0 skill changes in other mods.<br><br>\
+Restart after installing, updating or disabling. Co-op has not been validated.<br><br>\
+Personal gameplay use is permitted. Reusing original code or redistributing the mod requires prior written permission from Kgx37b9. See LICENSE.md.<br>\
+Credits: Kgx37b9, bl-sdk contributors and Gearbox Software for native game assets.\
+"""
+
+[tool.sdkmod]
+name = "Zer0 Rebalance"
+version = "1.0.7"
+supported_games = ["BL2"]
+coop_support = "Unknown"
+auto_enable = true
