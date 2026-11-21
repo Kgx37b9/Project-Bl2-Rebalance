@@ -10,7 +10,7 @@ import time
 from typing import Any
 
 import unrealsdk  # pyright: ignore[reportMissingModuleSource]
-from mods_base import RestartToDisable, build_mod, command, get_pc, hook
+from mods_base import ObjectFlags, RestartToDisable, build_mod, command, get_pc, hook
 from unrealsdk.hooks import Block, Type, prevent_hooking_direct_calls  # pyright: ignore[reportMissingModuleSource]
 from unrealsdk.unreal import WrappedArray, WrappedStruct  # pyright: ignore[reportMissingModuleSource]
 
@@ -1762,7 +1762,8 @@ def _configure_pain_is_power() -> bool:
         return False
     helper = _find("SkillDefinition", PAIN_STACK_EFFECT_PATH)
     if helper is None:
-        helper = unrealsdk.construct_object("SkillDefinition", definition, "KriegRebalance_PainStacks")
+        helper = unrealsdk.construct_object("SkillDefinition", definition, "KriegRebalance_PainStacks",
+                                             flags=ObjectFlags.KEEP_ALIVE)
     effects = list(helper.SkillEffectDefinitions)
     coefficients = (PAIN_CRIT_PER_RANK, PAIN_SPREAD_PER_RANK, PAIN_MELEE_PER_RANK)
     if len(effects) != 3 or not all(_pain_effect_matches(e, a, c)
@@ -1860,8 +1861,16 @@ def _sync_pain_is_power(controller: Any) -> None:
     pawn, key, now = context
     definition = _find("SkillDefinition", PAIN_IS_POWER_PATH)
     helper = _find("SkillDefinition", PAIN_STACK_EFFECT_PATH)
-    if definition is None or helper is None or definition.SkillEffectDefinitions:
+    if definition is None or definition.SkillEffectDefinitions:
         return  # Static migration has not completed; never duplicate the old bonuses.
+    if helper is None:
+        # A previously unreferenced private definition may have been collected.
+        # Repair only the missing static helper, not on every hit or tick.
+        if not _configure_pain_is_power():
+            return
+        helper = _find("SkillDefinition", PAIN_STACK_EFFECT_PATH)
+        if helper is None:
+            return
     manager = controller.GetSkillManager()
     if manager is None:
         return
@@ -2219,7 +2228,8 @@ def _stack_hud_feedback(
     if feedback is None:
         _prepared_runtime_leaves.discard(path)
         feedback = unrealsdk.construct_object(
-            "SkillDefinition", definition, object_name, template_obj=definition)
+            "SkillDefinition", definition, object_name, template_obj=definition,
+            flags=ObjectFlags.KEEP_ALIVE)
     _set_property(feedback, "SkillName", f"{label} stacks" if counter else label)
     _set_property(feedback, "SkillIcon", definition.SkillIcon)
     _set_property(feedback, "SkillType", unrealsdk.find_enum("ESkillType").SKILL_TYPE_Passive)
@@ -2244,13 +2254,13 @@ def _stack_hud_feedback(
     # (1..5), never the gameplay helper's stacks*rank or a shared global value.
     count = _find("AttributeDefinition", f"{path}.StackCount")
     if count is None:
-        count = unrealsdk.construct_object("AttributeDefinition", feedback, "StackCount")
+        count = unrealsdk.construct_object("AttributeDefinition", feedback, "StackCount", flags=ObjectFlags.KEEP_ALIVE)
     context = _find("SkillAttributeContextResolver", f"{path}.StackCount.SkillContext")
     if context is None:
-        context = unrealsdk.construct_object("SkillAttributeContextResolver", count, "SkillContext")
+        context = unrealsdk.construct_object("SkillAttributeContextResolver", count, "SkillContext", flags=ObjectFlags.KEEP_ALIVE)
     resolver = _find("ObjectPropertyAttributeValueResolver", f"{path}.StackCount.GradeValue")
     if resolver is None:
-        resolver = unrealsdk.construct_object("ObjectPropertyAttributeValueResolver", count, "GradeValue")
+        resolver = unrealsdk.construct_object("ObjectPropertyAttributeValueResolver", count, "GradeValue", flags=ObjectFlags.KEEP_ALIVE)
     _set_property(context, "AssociatedSkill", feedback)
     _set_property(resolver, "PropertyName", "Grade")
     _set_property(count, "bIsSimpleAttribute", True)
@@ -2263,8 +2273,8 @@ def _stack_hud_feedback(
         raise RuntimeError(f"{label} HUD did not retain its counter resolvers")
     _set_property(feedback, "CustomStackCount", count)
     _prepared_runtime_leaves.add(path)  # Mark only after all construction/readbacks succeeded.
-    # Registration/active instances retain this leaf in the CURRENT native HUD.
-    # No Python UObject cache, permanent root flag, or gameplay-child linkage.
+    # Only static definitions/resolvers are retained. Their Outer chain contains
+    # no controller, pawn, weapon, movie or departing world.
     return feedback
 
 
@@ -2565,19 +2575,25 @@ def _configure_salt_decay() -> bool:
     provider = _find("BehaviorProviderDefinition", SALT_DECAY_PROVIDER_PATH)
     if provider is None:
         return False
-    # The native StackDecay sequence subtracts one stack, then schedules itself.
-    # Change only that recursive delay, preserving the separate hold/reset timer.
+    # Delay BOTH native entry paths before testing/removing a stack. Delaying
+    # only the recursive output leaves the first loss immediate on each restart.
+    # Keep the separate native hold/reset logic and opaque graph arrays intact.
     if len(provider.BehaviorSequences) < 2:
         raise ValueError("Missing Salt the Wound decay sequence")
     sequence = provider.BehaviorSequences[1]
     if str(sequence.BehaviorSequenceName) != "StackDecay":
         raise ValueError("Unexpected Salt the Wound decay sequence")
-    if len(sequence.ConsolidatedOutputLinkData) < 3:
-        raise ValueError("Missing Salt the Wound decay loop")
-    link = sequence.ConsolidatedOutputLinkData[2]
-    if int(link.LinkIdAndLinkedBehavior) != -16777216:
+    links = sequence.ConsolidatedOutputLinkData
+    events = sequence.EventData2
+    if (len(links) != 5 or len(events) != 2 or
+            [str(e.UserData.EventName) for e in events] != ["OnBehaviorSequenceEnabled", "StackDecay"] or
+            [int(e.OutputLinks.ArrayIndexAndLength) for e in events] != [(3 << 16) | 1, (4 << 16) | 1] or
+            [int(link.LinkIdAndLinkedBehavior) for link in links] !=
+                [33554434, -16777213, -16777216, 1, 1]):
         raise ValueError("Unexpected Salt the Wound decay loop")
-    _set_property(link, "ActivateDelay", SALT_DECAY_INTERVAL)
+    _set_property(links[2], "ActivateDelay", 0.)
+    _set_property(links[3], "ActivateDelay", SALT_DECAY_INTERVAL)
+    _set_property(links[4], "ActivateDelay", SALT_DECAY_INTERVAL)
     return True
 
 
@@ -4114,7 +4130,7 @@ def _reset_static_configuration() -> None:
 
 
 def _apply_skill_configuration() -> None:
-    # No UObject is retained between calls or across map/menu teardown.
+    # Private rooted helpers contain static assets only; never retain world actors.
     for name, configure in (("Salt the Wound / Elemental Elation separate HUD counters", _configure_stack_hud),
                             ("Salt the Wound decay interval 1.5 seconds per stack", _configure_salt_decay),
                             ("Silence the Voices grenade description", _configure_silence_description),
@@ -4209,6 +4225,10 @@ def maintain_krieg_runtime(_controller: Any, _args: Any, _ret: Any, _func: Any) 
     global _next_apply_at, _configuration_world
     if _controller is None or _controller.bDeleteMe:
         return
+    player_class = getattr(_controller, "PlayerClass", None)
+    if (player_class is None or str(player_class._path_name()) !=
+            "GD_Lilac_PlayerClass.Character.CharClass_LilacPlayerClass"):
+        return  # Other vault hunters need none of Krieg's runtime maintenance.
     world = _controller.WorldInfo
     if world is None or world.bDeleteMe or _world_is_departing(_controller, world):
         return

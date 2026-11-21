@@ -1,4 +1,4 @@
-# Development notes - KriegRebalance 1.0.12
+# Development notes - KriegRebalance 1.0.13
 
 ## Release documentation review - 7 November 2026
 
@@ -132,3 +132,13 @@ Diagnostic hooks are absent from normal gameplay registration and enabled only b
 ### Follow-up: Hellfire Halitosis trigger confirmed by the author
 
 The author confirms using Hellfire Halitosis before the noise and hearing it after the visible flames end. The original graph posts `Ake_Lilac_PL_Psycho.Ak_Play_FX_Player_Psycho_Flame_Breath`; native self-burn posts the distinct `Ake_FX_Global.Ak_Play_FX_Elemental_Incendiary_StatusEffect_lp` / Stop counterpart. Both are candidates, not identified causes. The current SDK log still has no Audio trace entries. Capture should begin before breathing fire, followed by moving/stopping both during and after ignition. No additional gameplay/audio change follows solely from this correlation.
+
+## 2026-11-21 - Krieg 1.0.13: Pain is Power e primeira perda de Salt the Wound
+
+Captura real de35s confirmou dano de inimigos chegando a vida: primeira chamada HP9445.409->5201.316, FinalDamage4244.093. Pain registrou1,2,3,4 stacks no POST; o relato de nao ativacao nao era ausencia do gatilho nessa amostra. Nao houve ativacao/log do helper. Leitura externa anterior tinha KriegRebalance_PainStacks configurado; depois da captura, somente PainIsPower existia, sem seu helper. Pai tem efeitos vazios e nao referencia o helper; construct_object anterior nao usava KEEP_ALIVE. O GC podia remover a definicao privada antes da primeira ativacao; _sync retornava silenciosamente ao nao encontra-la, e configuracao ja concluida nao a recriava. Evidencia: Suporte/krieg_health_triggers_native_20261121.json e krieg_health_trigger_captures_20261121.json.
+
+Correcao: KEEP_ALIVE somente em definicoes/resolvers estaticos privados (PainStacks e construtor compartilhado dos indicadores). Outer sempre uma skill/atributo estatico: nunca pawn, arma, controller, movie ou world. _sync_pain_is_power reconstrui helper ausente uma vez quando a migracao do pai ja esta concluida, reaplicando os stacks existentes. Nenhum callback de dano extra nem varredura adicional no caminho normal. Coeficientes, COM, decay de Pain e slots preservados. O construtor de HUD e compartilhado, por isso verificadas integracoes Fuel/Bloody.
+
+Salt: captura confirmou geracao nativa, mas um stack sumiu antes dos1.5s previstos. Leitura do grafo mostra duas entradas (OnBehaviorSequenceEnabled e StackDecay) sem atraso, e a alteracao anterior de1.5s so na saida recursiva. A primeira perda de cada reinicio continuava imediata. Novo layout valida eventos, bindings e5 destinos antes de escrever; coloca1.5s nos links de entrada3/4 e zera antigo atraso recursivo2. Assim primeiro compare/subtract e os seguintes passam pela mesma espera de1.5s, sem somar3s; hold/reset/default, operacoes, variaveis opacas e geracao permanecem. Nao substituir arrays emprestados do SDK por listas de views para essa mudanca: gravar apenas tres campos ActivateDelay.
+
+85 testes focados/adjacentes aprovados: sobrevivencia simulada aGC antes do primeiro hit, reconstrucao unica e restauracao dos stacks, flags/Outer estatico deHUD, primeira perda e intervalo recorrente, idempotencia e rejeicao de binding inesperado antes das escritas, integracoesHUDPain/Fuel/Bloody. AST/TOML e pacote de seis arquivos1.0.13 conferidos, sem instalar no jogo aberto. Validacao nativa da correcao pendente: instalar com BL2 fechado e reiniciar; alocar ambas, receber dano real na vida e confirmar bonus/icone dePain; reunir stacksSalt e observar a primeira perda e as seguintes; testar tambem dano proprio. As capturas acima validaram dano de inimigos, nao uma sequencia de dano proprio. Coop nao testado.

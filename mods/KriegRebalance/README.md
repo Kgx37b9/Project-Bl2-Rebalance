@@ -1,4 +1,4 @@
-# KriegRebalance 1.0.12
+# KriegRebalance 1.0.13
 
 A Borderlands 2 Python SDK mod by **Kgx37b9**, reworking Krieg's Hellborn,
 Mania and Bloodlust skills while preserving the game's native skill system.
@@ -13,7 +13,7 @@ supported skills.
 | Skill | Current behavior |
 | --- | --- |
 | Blood Overdrive | Any kill activates/refreshes its native kill-skill duration. During it, each normal Bloodlust gain has a 10% chance per rank for one extra stack (50% at 5/5, 100% at 10/5; capped at 100% chance and one extra stack). At 60+ stacks with the kill skill active: 5% movement speed and 4% fire rate per rank (25%/20% at 5/5). Blood Overdrive is now in tier 5, center; Nervous Blood moves to its former tier 2, right position. |
-| Salt the Wound | Loses one stack every 1.5 seconds during decay. Native generation and hold/reset conditions are preserved. |
+| Salt the Wound | Loses one stack every 1.5 seconds during decay. The 1.5-second wait also applies to the first loss when decay starts. Native generation and hold/reset conditions are preserved. |
 | Salt the Wound / Elemental Elation | Native logical HUD slots: Bloodlust 1, Elemental Elation 2, Salt the Wound 3. Configure the layout before native tree registration; custom indicators reserve those slots. |
 | Silence the Voices | Adds Grenade Damage info to self-attack damage text; removes three camera anims and four screen-particle templates; self-damage limited to one application per 3s. |
 | Blood Bath | +0.3% gun damage per rank per Bloodlust stack while active (5/5 at 100 stacks: +150%). Native kill trigger, duration and grenade drops remain unchanged. |
@@ -71,7 +71,7 @@ requires restarting; do not replace or hot-reload the mod during gameplay.
 
 - Targeted offline checks cover current coefficients, class-mod ranks, native configuration and HUD allocation; they do not replace engine testing.
 - Solo gameplay has confirmed working skill effects and HUD indicators during development. The latest balance values still need final release-session confirmation.
-- Pain is Power's indicator was absent once and returned after a full restart. The failure state was not captured, so its cause remains unresolved. Gameplay stacks and HUD rendering must be distinguished when reporting a recurrence.
+- Version 1.0.13 fixes collected private Pain is Power effect/HUD definitions and the immediate first Salt the Wound decay step. Validate both changes after a full game restart; gameplay stacks and HUD rendering remain separate checks.
 - Co-op remains untested. No measured frame-time benchmark or guarantee of compatibility with other skill mods is claimed.
 
 ## Credits

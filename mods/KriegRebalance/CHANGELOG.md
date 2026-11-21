@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.0.13 - Pain is Power lifetime and Salt the Wound decay fixes
+
+- Retain Pain is Power's private static gameplay definition and stack HUD definitions/resolvers so native garbage collection cannot remove an inactive helper before it is needed. Recover a missing gameplay helper once and reapply existing stacks.
+- Salt the Wound waits 1.5 seconds before the first decay step as well as subsequent losses. Move the delay to both native decay entry paths and remove the old recursive delay to avoid doubling it; retain generation, hold/reset logic and graph bindings.
+- Preserve skill coefficients, class-mod ranks and independent HUD slots. Full restart required; native gameplay and co-op validation remain separate from offline tests.
+
+
+## Runtime maintenance review - 18 November 2026
+
+- Skip all per-tick Krieg runtime configuration, combat and HUD maintenance for other player classes. Preserve frontend/tree configuration and Krieg lifecycle behavior. Validate the current native PlayerClass each tick without retaining character objects.
+
 ## Release documentation review - 7 November 2026 (1.0.12 unchanged)
 
 - Align the public feature summary with current Bloodlust balance, ammo regeneration, tree placement and the optional EndgameQoLRebalance module.
